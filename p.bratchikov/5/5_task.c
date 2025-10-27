@@ -5,7 +5,7 @@
 
 int main()
 {
-    int file_descriptor = open("input.txt", O_RDONLY);
+    int file_descriptor = open("test.txt", O_RDONLY);
     if (file_descriptor == -1) {
         perror("Failed to open file");
         return 1;

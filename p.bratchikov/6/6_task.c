@@ -10,7 +10,7 @@ void handle_timer(int signal_num) { timer_expired = true; }
 
 int main()
 {
-    int file_handler = open("input.txt", O_RDONLY);
+    int file_handler = open("test.txt", O_RDONLY);
 
     char data_buffer[1024];
     int bytes_processed = read(file_handler, data_buffer, sizeof(data_buffer));

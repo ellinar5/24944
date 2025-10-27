@@ -12,7 +12,7 @@ void timeout_handler(int sig) { timeout = true; }
 
 int main()
 {
-    int st = open("input.txt", O_RDONLY);
+    int st = open("test.txt", O_RDONLY);
     struct stat file_info;
     fstat(st, &file_info); //получение информации о файле
 
