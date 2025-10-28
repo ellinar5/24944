@@ -1,6 +1,6 @@
-#define _POSIX_C_SOURCE 200112L
-#include <stdio.h>
+#define _POSIX_C_SOURCE 200809L
 #include <stdlib.h>
+#include <stdio.h>
 #include <unistd.h>
 #include <getopt.h>
 #include <sys/resource.h>
