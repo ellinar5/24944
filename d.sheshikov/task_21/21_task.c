@@ -3,8 +3,7 @@
 #include <unistd.h>
 #include <signal.h>
 #include <setjmp.h>
-
-static volatile sig_atomic_t signal_count = 0;
+int signal_count = 0;
 
 void sigint_handler(int sig) {
     printf("\a");
@@ -23,12 +22,15 @@ int main() {
     signal(SIGQUIT, sigquit_handler);
     
     printf("Программа запущена. Используйте:\n");
-    printf("  Ctrl+C - для звукового сигнала\n");
-    printf("  Ctrl+\\ (или Ctrl+4) - для выхода\n");
+    printf("Ctrl+C - для звукового сигнала\n");
+    printf("Ctrl+\\ (или Ctrl+4) - для выхода\n");
     printf("Ожидание сигналов...\n");
     
     while(1) {
         pause();
+        signal(SIGINT, sigint_handler);
+        signal(SIGQUIT, sigquit_handler);
+
     }
     
     return 0;
