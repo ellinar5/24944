@@ -1,0 +1,5 @@
+hello
+i am Dasha
+it's second text
+bye!
+Конец текста.
