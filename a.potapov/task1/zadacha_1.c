@@ -67,7 +67,6 @@ int main(int argc, char *argv[])
                 }
                 else { perror("Failed to get current ulimit\n"); }
                 break;
-
             // -c  Печатает размер в байтах core-файла, который может быть создан.
             case 'c':
                 {
@@ -82,7 +81,6 @@ int main(int argc, char *argv[])
                     else { perror("Failed to get core file limit"); }
                 }
                 break;
-
             // -Csize  Изменяет размер core-файла
             case 'C':
                 if (getrlimit(RLIMIT_CORE, &rlp) == 0)
