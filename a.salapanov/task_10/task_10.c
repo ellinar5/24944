@@ -20,14 +20,11 @@ int main(int argc, char **argv) {
     }
 
     if (pid == 0) {
-        // child: запускаем команду; argv[1] — команда, argv[1..] — её аргументы
         execvp(argv[1], &argv[1]);
-        // если здесь — execvp не удался
         perror("execvp");
-        _exit(127); // как в POSIX-шеллах: 127 = команда не найдена/не запустилась
+        _exit(127); 
     }
 
-    // parent: ждём ровно этого ребёнка
     int status = 0;
     pid_t r = waitpid(pid, &status, 0);
     if (r == -1) {
@@ -41,11 +38,9 @@ int main(int argc, char **argv) {
         printf("Команда завершилась нормально, код выхода: %d\n", exit_code);
     } else if (WIFSIGNALED(status)) {
         int sig = WTERMSIG(status);
-        // Общая конвенция: код возврата = 128 + номер сигнала
         exit_code = 128 + sig;
         printf("Команда завершена сигналом %d, сообщаем код: %d\n", sig, exit_code);
     } else {
-        // редкие случаи (стоп/континью), обозначим как 1
         exit_code = 1;
         printf("Команда завершилась нестандартно (status=0x%x), код: %d\n", status, exit_code);
     }
