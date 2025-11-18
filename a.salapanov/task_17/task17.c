@@ -16,7 +16,6 @@ static void restore_terminal(void) {
     tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios);
 }
 
-
 static int find_last_word_start(const char *buf, int len) {
     int i = len - 1;
     while (i >= 0 && buf[i] == ' ')
@@ -27,7 +26,6 @@ static int find_last_word_start(const char *buf, int len) {
         i--;
     return i + 1;
 }
-
 
 static void erase_n_chars_on_screen(int n) {
     for (int i = 0; i < n; i++) {
@@ -56,6 +54,19 @@ int main(void) {
         perror("tcsetattr");
         return 1;
     }
+
+    // --- ПОДСКАЗКА ПОЛЬЗОВАТЕЛЮ ---
+    printf("Строчный редактор (MAX_COLS = %d)\n", MAX_COLS);
+    printf("Доступные сочетания клавиш:\n");
+    printf("  Ctrl+D  — выход, если строка пуста; иначе — звуковой сигнал\n");
+    printf("  ERASE   — стереть последний символ (Backspace)\n");
+    printf("  KILL    — стереть всю строку (Ctrl+U)\n");
+    printf("  Ctrl+W  — стереть последнее слово вместе с пробелами\n");
+    printf("  Enter   — завершить строку и начать новую\n");
+    printf("  Непечатаемые символы (кроме указанных) — звуковой сигнал\n");
+    printf("\nНачинайте ввод...\n");
+    fflush(stdout);
+    // --- КОНЕЦ ПОДСКАЗКИ ---
 
     unsigned char erase_char = orig_termios.c_cc[VERASE];
     unsigned char kill_char  = orig_termios.c_cc[VKILL];

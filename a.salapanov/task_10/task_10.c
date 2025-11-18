@@ -45,6 +45,5 @@ int main(int argc, char **argv) {
         printf("Команда завершилась нестандартно (status=0x%x), код: %d\n", status, exit_code);
     }
 
-    // Возвращаем тот же код, чтобы это было видно в оболочке (echo $?)
     return exit_code;
 }
