@@ -1,0 +1,17 @@
+The const char *arg and subsequent ellipses can be thought of as  arg0,
+       arg1, ..., argn.  Together they describe a list of one or more pointers
+       to  null-terminated  strings that represent the argument list available
+       to the executed program.  The first  argument,  by  convention,  should
+       point  to  the  filename  associated with the file being executed.  The
+       list of arguments must be terminated by  a  null  pointer,  and,  since
+       these are variadic functions, this pointer must be cast (char *) NULL.
+
+       By  contrast  with the 'l' functions, the 'v' functions (below) specify
+       the command-line arguments of the executed program as a vector.
+
+   v - execv(), execvp(), execvpe()
+       The char *const argv[] argument is an array of pointers to  null-termi‐
+       nated  strings  that  represent  the argument list available to the new
+       program.  The first argument, by convention, should point to the  file‐
+       name  associated  with  the file being executed.  The array of pointers
+       must be terminated by a null pointer.
