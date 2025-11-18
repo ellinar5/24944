@@ -10,7 +10,6 @@
 #include <unistd.h>
 #include <limits.h>
 
-/* Формирование строки прав доступа "rwxr-xr--" */
 static void build_perm_string(mode_t mode, char *out) {
     const char chars[] = "rwxrwxrwx";
     for (int i = 0; i < 9; i++) {
@@ -19,14 +18,12 @@ static void build_perm_string(mode_t mode, char *out) {
     out[9] = '\0';
 }
 
-/* Тип файла: d / - / ? (можно расширить под l, c, b и т.д.) */
 static char file_type_char(mode_t mode) {
     if (S_ISDIR(mode))  return 'd';
     if (S_ISREG(mode))  return '-';
     return '?';
 }
 
-/* Печать строки как у ls -ld для одного пути */
 static void print_file_info(const char *path) {
     struct stat st;
 
@@ -53,24 +50,21 @@ static void print_file_info(const char *path) {
         snprintf(timebuf, sizeof(timebuf), "????????????");
     }
 
-    /* Имя файла без пути */
     char path_copy[PATH_MAX];
     strncpy(path_copy, path, sizeof(path_copy) - 1);
     path_copy[sizeof(path_copy) - 1] = '\0';
     char *fname = basename(path_copy);
 
-    /* Печатаем:
-       тип+права, ссылки, владелец, группа, размер/пусто, время, имя */
-    printf("%c%s ", type, perms);                       // тип + права
-    printf("%3lu ", (unsigned long)st.st_nlink);        // кол-во ссылок
-    printf("%-8s %-8s ", user, group);                  // владелец, группа
+    printf("%c%s ", type, perms);                      
+    printf("%3lu ", (unsigned long)st.st_nlink);      
+    printf("%-8s %-8s ", user, group);                
 
     
-    printf("%8lld ", (long long)st.st_size);        // размер только для обычных файлов
+    printf("%8lld ", (long long)st.st_size);       
     
 
-    printf("%s ", timebuf);                             // время
-    printf("%s\n", fname);                              // имя
+    printf("%s ", timebuf);                             
+    printf("%s\n", fname);                            
 }
 
 int main(int argc, char *argv[]) {
