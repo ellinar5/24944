@@ -1,3 +1,0 @@
-all:
-  gcc -std=c99 2_task.c -o tst2
-  ./tst2
