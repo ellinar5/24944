@@ -10,72 +10,67 @@
 #include <unistd.h>
 #include <limits.h>
 
+/* Формирование строки прав доступа "rwxr-xr--" */
+static void build_perm_string(mode_t mode, char *out) {
+    const char chars[] = "rwxrwxrwx";
+    for (int i = 0; i < 9; i++) {
+        out[i] = (mode & (1 << (8 - i))) ? chars[i] : '-';
+    }
+    out[9] = '\0';
+}
+
+/* Тип файла: d / - / ? (можно расширить под l, c, b и т.д.) */
+static char file_type_char(mode_t mode) {
+    if (S_ISDIR(mode))  return 'd';
+    if (S_ISREG(mode))  return '-';
+    return '?';
+}
+
+/* Печать строки как у ls -ld для одного пути */
 static void print_file_info(const char *path) {
     struct stat st;
 
-    /* lstat, чтобы для симлинков печатать сам линк, как делает ls -ld */
     if (lstat(path, &st) == -1) {
         perror(path);
         return;
     }
 
-    /* Тип файла: d / - / ? */
-    char type;
-    if (S_ISDIR(st.st_mode))
-        type = 'd';
-    else if (S_ISREG(st.st_mode))
-        type = '-';
-    else
-        type = '?';
-
-    /* Права доступа rwx для user/group/other */
     char perms[10];
-    perms[0] = (st.st_mode & S_IRUSR) ? 'r' : '-';
-    perms[1] = (st.st_mode & S_IWUSR) ? 'w' : '-';
-    perms[2] = (st.st_mode & S_IXUSR) ? 'x' : '-';
-    perms[3] = (st.st_mode & S_IRGRP) ? 'r' : '-';
-    perms[4] = (st.st_mode & S_IWGRP) ? 'w' : '-';
-    perms[5] = (st.st_mode & S_IXGRP) ? 'x' : '-';
-    perms[6] = (st.st_mode & S_IROTH) ? 'r' : '-';
-    perms[7] = (st.st_mode & S_IWOTH) ? 'w' : '-';
-    perms[8] = (st.st_mode & S_IXOTH) ? 'x' : '-';
-    perms[9] = '\0';
+    build_perm_string(st.st_mode, perms);
+    char type = file_type_char(st.st_mode);
 
-    /* Владелец и группа */
     struct passwd *pw = getpwuid(st.st_uid);
     struct group  *gr = getgrgid(st.st_gid);
 
     const char *user  = pw ? pw->pw_name  : "UNKNOWN";
-    const char *group = gr ? gr->gr_name : "UNKNOWN";
+    const char *group = gr ? gr->gr_name  : "UNKNOWN";
 
-    /* Время последней модификации */
     char timebuf[64];
     struct tm *mt = localtime(&st.st_mtime);
-    if (mt != NULL) {
+    if (mt) {
         strftime(timebuf, sizeof(timebuf), "%b %d %H:%M", mt);
     } else {
         snprintf(timebuf, sizeof(timebuf), "????????????");
     }
 
-    /* Получаем только имя файла из пути */
+    /* Имя файла без пути */
     char path_copy[PATH_MAX];
     strncpy(path_copy, path, sizeof(path_copy) - 1);
     path_copy[sizeof(path_copy) - 1] = '\0';
     char *fname = basename(path_copy);
 
-    /* Печать в «табличном» формате */
-    printf("%c%s ", type, perms);                             // тип + права
-    printf("%3lu ", (unsigned long)st.st_nlink);              // число ссылок
-    printf("%-8s %-8s ", user, group);                        // владелец, группа
+    /* Печатаем:
+       тип+права, ссылки, владелец, группа, размер/пусто, время, имя */
+    printf("%c%s ", type, perms);                       // тип + права
+    printf("%3lu ", (unsigned long)st.st_nlink);        // кол-во ссылок
+    printf("%-8s %-8s ", user, group);                  // владелец, группа
 
-    if (S_ISREG(st.st_mode)) {
-        printf("%8lld ", (long long)st.st_size);              // размер для обычных файлов
-    } else {
-        printf("%8s ", "");                                   // пустое поле для остальных
-    }
+    
+    printf("%8lld ", (long long)st.st_size);        // размер только для обычных файлов
+    
 
-    printf("%s ", timebuf);                                   // дата/время
-    printf("%s\n", fname);                                    // имя файла
+    printf("%s ", timebuf);                             // время
+    printf("%s\n", fname);                              // имя
 }
 
 int main(int argc, char *argv[]) {

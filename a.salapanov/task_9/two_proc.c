@@ -6,10 +6,7 @@
 
 int main(int argc, char *argv[])
 {
-    if (argc < 2) {
-        fprintf(stderr, "Использование: %s <имя_файла>\n", argv[0]);
-        return 1;
-    }
+    
 
     const char *filename = argv[1];
 
