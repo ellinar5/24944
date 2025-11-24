@@ -3,9 +3,14 @@
 #include <unistd.h>
 #include <stdlib.h>
 
-int main()
+int main(int argc, char *argv[])
 {
-    int file_descriptor = open("test.txt", O_RDONLY);
+    if (argc != 2) {
+        printf("Usage: %s <filename>\n", argv[0]);
+        return 1;
+    }
+
+    int file_descriptor = open(argv[1], O_RDONLY);
     if (file_descriptor == -1) {
         perror("Failed to open file");
         return 1;
@@ -20,7 +25,7 @@ int main()
     }
 
     int line_count = 0;
-    int i;  // Объявление переменной вне цикла
+    int i;
     for (i = 0; i < bytes_read; i++) {
         if (buffer[i] == '\n') {
             line_count++;
@@ -47,10 +52,8 @@ int main()
     line_positions[0] = 0;
     int index = 1;
 
-    for (i = 0; i < bytes_read; i++)  // Используем уже объявленную i
-    {
-        if (buffer[i] == '\n') 
-        {
+    for (i = 0; i < bytes_read; i++) {
+        if (buffer[i] == '\n') {
             line_positions[index] = i + 1;
             index++;
         }
@@ -59,9 +62,8 @@ int main()
     line_positions[line_count] = bytes_read;
 
     printf("== Line number to position mapping ==\n");
-    int j;  // Объявление переменной вне цикла
-    for (j = 0; j < line_count; j++)
-    {
+    int j;
+    for (j = 0; j < line_count; j++) {
         lseek(file_descriptor, line_positions[j], SEEK_SET);
 
         int line_length = line_positions[j+1] - line_positions[j];
@@ -75,8 +77,7 @@ int main()
         printf("%d\t%d\t%d\n", j+1, line_positions[j], line_length);
     }
 
-    while(1)
-    {
+    while (1) {
         printf("Enter line number (1-%d, 0 to exit): ", line_count);
         int line_number;
         int scan_result = scanf("%d", &line_number);
@@ -88,11 +89,9 @@ int main()
             continue;
         }
 
-        if (line_number == 0) { 
-            break; 
-        } 
-        else if (line_number > line_count || line_number < 1)
-        {
+        if (line_number == 0) break;
+
+        if (line_number < 1 || line_number > line_count) {
             printf("Invalid line number\n");
             continue;
         }
@@ -105,10 +104,10 @@ int main()
             perror("Memory allocation failed");
             continue;
         }
-        
+
         read(file_descriptor, line_content, line_length);
         line_content[line_length] = '\0';
-        
+
         printf("Line %d: %s", line_number, line_content);
         free(line_content);
     }

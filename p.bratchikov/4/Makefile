@@ -1,3 +1,3 @@
 all:
-	gcc -std=c99 4_task.c -o tst4
-	./tst4
+	@gcc -std=c99 4_task.c -o tst4
+	@./tst4

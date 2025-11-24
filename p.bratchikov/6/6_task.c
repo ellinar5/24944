@@ -3,17 +3,33 @@
 #include <signal.h>
 #include <stdbool.h>
 #include <unistd.h>
+#include <stdlib.h>
 
 volatile bool timer_expired = false;
 
 void handle_timer(int signal_num) { timer_expired = true; }
 
-int main()
+int main(int argc, char *argv[])
 {
-    int file_handler = open("test.txt", O_RDONLY);
+    if (argc != 2) {
+        printf("Usage: %s <filename>\n", argv[0]);
+        return 1;
+    }
+
+    int file_handler = open(argv[1], O_RDONLY);
+    if (file_handler == -1) {
+        perror("Failed to open file");
+        return 1;
+    }
 
     char data_buffer[1024];
     int bytes_processed = read(file_handler, data_buffer, sizeof(data_buffer));
+
+    if (bytes_processed <= 0) {
+        printf("File is empty or cannot be read\n");
+        close(file_handler);
+        return 1;
+    }
 
     int total_lines = 0;
     for (int counter = 0; counter < bytes_processed; counter++) { 
@@ -22,7 +38,13 @@ int main()
 
     if (data_buffer[bytes_processed-1] != '\n') { total_lines++; }
 
-    int line_offsets[total_lines + 1];
+    int *line_offsets = malloc((total_lines + 1) * sizeof(int));
+    if (!line_offsets) {
+        perror("Memory allocation failed");
+        close(file_handler);
+        return 1;
+    }
+
     line_offsets[0] = 0;
     int position_index = 1;
 
@@ -43,11 +65,15 @@ int main()
         lseek(file_handler, line_offsets[line_num], SEEK_SET);
 
         int line_size = line_offsets[line_num+1] - line_offsets[line_num];
-        char line_content[line_size];
-        read(file_handler, line_content, line_size);
+        char *line_content = malloc(line_size + 1);
 
-        printf("%d\t%d\t%d", line_num+1, line_offsets[line_num], line_size);
-        printf("\n");
+        if (line_content) {
+            read(file_handler, line_content, line_size);
+            line_content[line_size] = '\0';
+            free(line_content);
+        }
+
+        printf("%d\t%d\t%d\n", line_num+1, line_offsets[line_num], line_size);
     }
 
     signal(SIGALRM, handle_timer);
@@ -87,28 +113,33 @@ int main()
             continue;
         }
 
-        if (user_input == 0) { break; }
-        else if (user_input > total_lines || user_input < 1) { 
+        if (user_input == 0) break;
+
+        if (user_input > total_lines || user_input < 1) { 
             printf("Line number out of range\n"); 
             continue; 
         }
 
-        if (input_status == 1)
-        {
-            lseek(file_handler, line_offsets[user_input-1], SEEK_SET);
+        lseek(file_handler, line_offsets[user_input-1], SEEK_SET);
 
-            int selected_line_size = line_offsets[user_input] - line_offsets[user_input-1];
-            char selected_line_content[selected_line_size];
-            read(file_handler, selected_line_content, selected_line_size);
+        int selected_line_size = line_offsets[user_input] - line_offsets[user_input-1];
+        char *selected_line_content = malloc(selected_line_size + 1);
 
-            for (int char_index = 0; char_index < selected_line_size; char_index++) { 
-                printf("%c", selected_line_content[char_index]); 
-            }
-            printf("\n");
+        if (selected_line_content == NULL) {
+            perror("Memory allocation failed");
+            continue;
         }
+
+        read(file_handler, selected_line_content, selected_line_size);
+        selected_line_content[selected_line_size] = '\0';
+
+        printf("%s\n", selected_line_content);
+        free(selected_line_content);
     }
 
+    free(line_offsets);
     close(file_handler);
 
     return 0;
 }
+
