@@ -1,108 +1,158 @@
-#include <unistd.h>
-#include <sys/termios.h>
-#include <stdlib.h>
 #include <stdio.h>
-#include <ctype.h>
+#include <stdlib.h>
 #include <string.h>
+#include <termios.h>
+#include <unistd.h>
+#include <ctype.h>
 
-#define LINE_LENGTH 40
+#define MAX_LINE 40
+#define BELL '\a'
+#define CTRL(c) ((c) & 0x1F)  // Преобразование Ctrl+X → код
+
+// Специальные символы 
+#define ERASE   0x7F    // Backspace 
+#define KILL    CTRL('U')
+#define WORD_ERASE CTRL('W')
+#define EOF_KEY CTRL('D')
+
+// Глобальные переменные
 struct termios orig_termios;
+char line[MAX_LINE + 1] = {0};  
+int pos = 0;                    
 
-void disableRawMode() {
+// Восстановление терминала при выходе
+void restore_terminal(void) {
     tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios);
 }
 
-void enableRawMode() {
+// Настройка raw-режима
+void enable_raw_mode(void) {
+    struct termios raw;
     tcgetattr(STDIN_FILENO, &orig_termios);
-    atexit(disableRawMode);
+    atexit(restore_terminal);
 
-    struct termios raw = orig_termios;
-    raw.c_lflag &= ~(ECHO | ICANON);
+    raw = orig_termios;
+    raw.c_lflag &= ~(ECHO | ICANON | IEXTEN | ISIG);  // Откл. эхо, канонич. режим, Ctrl-C/V, сигналы
+    raw.c_iflag &= ~(BRKINT | ICRNL | INPCK | ISTRIP | IXON); // Откл. Ctrl-S/Q
+    raw.c_cflag |= (CS8);
+    raw.c_oflag &= ~(OPOST);  // Откл. постобработку вывода
+    raw.c_cc[VMIN] = 1;       // Читать по 1 байту
+    raw.c_cc[VTIME] = 0;
+
     tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
 }
 
-int main() {
-    enableRawMode();
+// Звуковой сигнал
+void beep(void) {
+    write(STDOUT_FILENO, "\a", 1);
+}
 
-    char c;
-    static char line[LINE_LENGTH + 1];
+// Удаление последнего слова (до пробела)
+void erase_word(void) {
+    // Удаляем пробелы с конца
+    while (pos > 0 && line[pos-1] == ' ') {
+        pos--;
+        write(STDOUT_FILENO, "\b \b", 3);  
+    }
+    // Удаляем слово
+    while (pos > 0 && line[pos-1] != ' ') {
+        pos--;
+        write(STDOUT_FILENO, "\b \b", 3);
+    }
+}
 
-    while (read(STDIN_FILENO, &c, 1) == 1) {
-        int len = strlen(line);
-        if (iscntrl(c) || !isprint(c)) {
-            switch (c) {
-                case 0x7F: {  // CERASE - Backspace/Delete
-                    // Когда вводится символ ERASE, стирается
-                    // последний символ в текущей строке.
-                    if (len > 0) {
-                        line[len - 1] = 0;
-                        // [D - Move cursor left one char
-                        // [K - Clear line from cursor right
-                        printf("\33[D\33[K");
-                    }
-                    break;
-                }
+// Перенос слова на новую строку, если > 40 символов
+void wrap_line(void) {
+    if (pos <= MAX_LINE) return;
 
-                case 0x15: {  // CKILL - Ctrl+U
-                    // Когда вводится символ KILL, стираются
-                    // все символы в текущей строке.
-                    line[0] = 0;
-                    // [2K - Clear entire line
-                    printf("\33[2K\r");
-                    break;
-                }
+    
+    int word_start = pos;
+    while (word_start > 0 && line[word_start-1] != ' ') word_start--;
 
-                case 0x17: {  // CWERASE - Ctrl+W
-                    // Когда вводится CTRL-W, стирается последнее слово в текущей
-                    // строке, вместе со всеми следующими за ним пробелами.
-                    if (len > 0) {
-                        int word_start = len;
-                        char prev = ' ';
-                        for (int i = len - 1; i >= 0; i--) {
-                            if (line[i] != ' ' && prev == ' ') {
-                                word_start = i;
-                            } else if (line[i] == ' ' && prev != ' ') {
-                                break;
-                            }
-                            prev = line[i];
-                        }
-
-                        line[word_start] = 0;
-                        // [<n>D - Move cursor left n chars
-                        // [K - Clear line from cursor right
-                        printf("\33[%dD\33[K", len - word_start);
-                    }
-                    break;
-                }
-
-                case 0x04: {  // CEOF - Ctrl+D
-                    // Программа завершается, когда введен CTRL-D
-                    // и курсор находится в начале строки.
-                    if (line[0] == 0) { exit(0); }
-                    break;
-                }
-
-                default: {
-                    // Все непечатаемые символы, кроме перечисленных выше, должны
-                    // издавать звуковой сигнал, выводя на терминал символ CTRL-G.
-                    putchar('\a');
-                    break;
-                }
-            }
-        } else {
-            if (len == LINE_LENGTH) {
-                putchar('\n');
-                len = 0;
-            }
-
-            line[len++] = c;
-            line[len] = 0;
-
-            putchar(c);
-        }
-
-        fflush(NULL);
+    if (word_start == 0) {
+        
+        write(STDOUT_FILENO, "\r\n", 2);
+        // Копируем остаток строки
+        memmove(line, line + MAX_LINE, pos - MAX_LINE);
+        pos -= MAX_LINE;
+        line[pos] = '\0';
+        write(STDOUT_FILENO, line, pos);
+    } else {
+        // Переносим по пробелу
+        write(STDOUT_FILENO, "\r\n", 2);
+        memmove(line, line + word_start, pos - word_start);
+        pos -= word_start;
+        line[pos] = '\0';
+        write(STDOUT_FILENO, line, pos);
     }
 
+    // Курсор теперь в начале новой строки
+}
+
+int main(void) {
+    enable_raw_mode();
+    printf("Управление: CTRL + D в начале строки - выход\r\n CTRL+U - стирается последняя строка\r\n CTRL + W - стирает последнее слово\r\n");
+    printf("Введите текст:\r\n> ");
+
+    char c;
+    while (read(STDIN_FILENO, &c, 1) == 1) {
+        if (c == EOF_KEY && pos == 0) {
+            // Ctrl+D в начале строки — выход
+            printf("\r\n[LOG] Выход по Ctrl+D\r\n");
+            break;
+        }
+
+        if (c == ERASE && pos > 0) {
+            // Backspace — стираем один символ
+            pos--;
+            line[pos] = '\0';
+            write(STDOUT_FILENO, "\b \b", 3);
+            continue;
+        }
+
+        if (c == KILL) {
+            // Ctrl+U — стираем всю строку
+            while (pos > 0) {
+                write(STDOUT_FILENO, "\b \b", 3);
+                pos--;
+            }
+            line[0] = '\0';
+            continue;
+        }
+
+        if (c == WORD_ERASE) {
+            // Ctrl+W — стираем последнее слово
+            erase_word();
+            line[pos] = '\0';
+            continue;
+        }
+
+        if (c == '\r' || c == '\n') {
+            // Enter — завершаем строку
+            printf("\r\nВы ввели: %s\r\n", line);
+            // Сброс строки
+            pos = 0;
+            line[0] = '\0';
+            printf("> ");
+            continue;
+        }
+
+        // Обычный печатаемый символ
+        if (isprint(c) && pos < MAX_LINE) {
+            line[pos++] = c;
+            line[pos] = '\0';
+            write(STDOUT_FILENO, &c, 1);
+        } else if (isprint(c)) {
+            // Попытка превысить 40 символов — переносим слово
+            line[pos++] = c;
+            line[pos] = '\0';
+            wrap_line();
+        } else {
+            // Непечатаемый символ (кроме спец. клавиш) → звонок
+            beep();
+        }
+    }
+
+    restore_terminal();
     return 0;
 }
