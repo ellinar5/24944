@@ -15,19 +15,19 @@
 void disable_echo_and_canonical(struct termios *old_tio)
 {
     struct termios new_tio;
-    tcgetattr(STDIN_FILENO, old_tio);
+    tcgetattr(STDIN_FILENO, old_tio);  // сохранение текущих настроек
     new_tio = *old_tio;
-    new_tio.c_lflag &= ~ICANON;
-    new_tio.c_lflag &= ~ECHO;
-    new_tio.c_cc[VMIN] = 1;
-    new_tio.c_cc[VTIME] = 0;
+    new_tio.c_lflag &= ~ICANON;        // выкл канон режим (ввод буферизуется и обрабатывается построчно)
+    new_tio.c_lflag &= ~ECHO;          // выкл эхо (отображение вводимых символов на экране)
+    new_tio.c_cc[VMIN] = 1;            // мин число символов для read()
+    new_tio.c_cc[VTIME] = 0;           // бесконечное ожидание
     tcsetattr(STDIN_FILENO, TCSANOW, &new_tio);
 }
 
 // перерисовка строки с учетом позиции курсора
 void redraw_line(const char *line, int pos)
 {
-    write(STDOUT_FILENO, "\r\033[K", 4);
+    write(STDOUT_FILENO, "\r\033[K", 4); // возврат на начало строки + очистка
     write(STDOUT_FILENO, line, strlen(line));
     
     // возврат курсора на позицию
@@ -47,7 +47,6 @@ int main()
 
     char line[MAX_LINE_LEN + 1] = {0};
     int pos = 0;
-    int column = 0;
     char beep = CTRL_G;
 
     printf("Введите текст: ");
@@ -60,29 +59,28 @@ int main()
 
         if (c == CTRL_D)
         { 
-            if (pos == 0 && column == 0) { break; } 
+            if (pos == 0) { break; } 
         }
         else if (c == BACKSCAPE)
         { 
             if (pos > 0)
             {
+                // сдвиг влево на 1
                 memmove(&line[pos - 1], &line[pos], strlen(line) - pos + 1);
                 pos--;
-                column--;
                 redraw_line(line, pos);
             }
-            else { write(STDOUT_FILENO, &beep, 1); } 
+            else { continue; } 
         }
         else if (c == CTRL_U)
         { 
             if (pos > 0)
             {
                 memset(line, 0, MAX_LINE_LEN + 1);
-                column = 0;
                 pos = 0;
                 redraw_line(line, pos);
             }
-            else { write(STDOUT_FILENO, &beep, 1); }
+            else { continue; }
         }
         else if (c == CTRL_W)
         { 
@@ -90,15 +88,13 @@ int main()
     
             int search_position = pos - 1;
             
-            // пробелы в конце
+            // пропуск пробелов в конце
             while (search_position >= 0 && line[search_position] == ' ') { search_position--; }
             
-            // последнее слово
+            // поиск начала последнего слова
             while (search_position >= 0 && line[search_position] != ' ') { search_position--; }
             
-            search_position++; // переходим к первому символу слова
-            
-            // сколько символов нужно удалить
+            search_position++;
             int chars_to_delete = pos - search_position;
             
             // сдвиг остатка строки
@@ -107,7 +103,6 @@ int main()
             memset(&line[strlen(line)], 0, chars_to_delete);
             
             pos = search_position;
-            column = search_position;
             
             redraw_line(line, pos); 
         }
@@ -121,10 +116,9 @@ int main()
                 }
                 line[pos] = c;
                 pos++;
-                column++;
 
                 // необходимость переноса
-                if (column >= MAX_LINE_LEN) 
+                if (pos >= MAX_LINE_LEN) 
                 {
                     int word_start = pos - 1;
                     
@@ -136,10 +130,8 @@ int main()
                     // слово начинается с начала строки и слишком длинное
                     if (word_start == 0 && pos >= MAX_LINE_LEN) 
                     {
-                        write(STDOUT_FILENO, &beep, 1);
                         memmove(&line[pos - 1], &line[pos], strlen(line) - pos + 1);
                         pos--;
-                        column--;
                         continue;
                     }
 
@@ -153,7 +145,6 @@ int main()
                     
                     // строка без переносимого слова
                     pos = word_start;
-                    column = word_start;
                     redraw_line(line, pos);
 
                     memset(line, 0, sizeof(line));
@@ -165,7 +156,6 @@ int main()
                     // перенесенное слово = новая текущая строка
                     strcpy(line, word_to_wrap);
                     pos = word_len;
-                    column = word_len;
                 }
                 else { redraw_line(line, pos); }
             }
@@ -177,7 +167,6 @@ int main()
             fflush(stdout);
             memset(line, 0, sizeof(line));
             pos = 0;
-            column = 0;
         }
         else { write(STDOUT_FILENO, &beep, 1); }
     }
