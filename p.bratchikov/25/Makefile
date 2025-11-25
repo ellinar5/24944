@@ -1,3 +1,0 @@
-all:
-	@gcc -std=c99 25_task.c -o tst25
-	@./tst25

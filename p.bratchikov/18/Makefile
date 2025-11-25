@@ -1,3 +1,0 @@
-all:
-	@gcc -std=c99 18_task.c -o tst18
-	@./tst18 test.txt
