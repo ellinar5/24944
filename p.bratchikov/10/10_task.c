@@ -5,63 +5,44 @@
 #include <string.h>
 #include <stdlib.h>
 
-int main(int argc, char *argv[]) 
-{
+void print_help(const char *prog) {
+    printf("This program forks and executes: cat blur_faces.py\n");
+    printf("Usage: %s [--help|-h]\n", prog);
+}
 
-    if (argc > 1 && (strcmp(argv[1], "--help") == 0 || strcmp(argv[1], "-h") == 0)) 
-    {
-        printf("\nThis program forks a child process to execute a command passed as arguments.\n");
-        printf("\nUsage: %s <command> [args...]\n", argv[0]);
-        return 0;
-    }
-
-    if (argc == 1) 
-    {
-        fprintf(stderr, "\nError: No command provided. Use --help for usage.\n");
-        return 1;
+int main(int argc, char *argv[]) {
+    if (argc > 1 && (strcmp(argv[1], "--help") == 0 || strcmp(argv[1], "-h") == 0)) {
+        print_help(argv[0]);
+        return EXIT_SUCCESS;
     }
 
     pid_t pid = fork();
-
-    if (pid == -1) 
-    {
-        fprintf(stderr, "\nfork() error: %s\n", strerror(errno));
-        return 1;
+    if (pid == -1) {
+        fprintf(stderr, "fork() error: %s\n", strerror(errno));
+        exit(EXIT_FAILURE);
     }
 
-    if (pid == 0) 
-    {
-        execvp(argv[1], argv + 1);
-        fprintf(stderr, "\nexecvp() error: %s\n", strerror(errno));
-        return 1;
+    if (pid == 0) {
+        execlp("cat", "cat", "blur_faces.py", NULL);
+        fprintf(stderr, "execlp() error: %s\n", strerror(errno));
+        exit(EXIT_FAILURE);
     }
 
-    else 
-    {
-        
-        int stat_loc;
-
-        if (wait(&stat_loc) == -1) 
-        {
-            fprintf(stderr, "\nwait() error: %s\n", strerror(errno));
-            return 1;
-        }
-
-        if (WIFEXITED(stat_loc)) 
-        {
-            printf("\nChild process (pid: %d) finished with exit code %d\n", pid, WEXITSTATUS(stat_loc));
-        }
-
-        else if (WIFSIGNALED(stat_loc)) 
-        {
-            printf("\nChild process (pid: %d) was terminated by signal %d\n", pid, WTERMSIG(stat_loc));
-        }
-
-        else 
-        {
-            printf("\nChild process (pid: %d) finished in unknown state\n", pid);
-        }
+    int status;
+    if (wait(&status) == -1) {
+        fprintf(stderr, "wait() error: %s\n", strerror(errno));
+        exit(EXIT_FAILURE);
     }
 
-    return 0;
+    if (WIFEXITED(status)) {
+        printf("Child process (pid: %d) finished with exit code %d\n", pid, WEXITSTATUS(status));
+    } 
+    else if (WIFSIGNALED(status)) {
+        printf("Child process (pid: %d) was terminated by signal %d\n", pid, WTERMSIG(status));
+    } 
+    else {
+        printf("Child process (pid: %d) finished in unknown state\n", pid);
+    }
+
+    return EXIT_SUCCESS;
 }
