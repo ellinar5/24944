@@ -1,5 +1,5 @@
-#include <termios.h>     
-#include <unistd.h>      
+#include <termios.h>
+#include <unistd.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <ctype.h>
@@ -22,30 +22,39 @@
 #endif
 
 #define LINE_LENGTH 40
-struct termios orig_termios;
 
-void disableRawMode() {
-    if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios) == -1) {
-        fprintf(stderr, "tcsetattr failed\n");
-        exit(EXIT_FAILURE);
-    }
+static struct termios orig_termios;
+
+
+void restoreTerminal() {
+    tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios);
 }
+
 
 void enableRawMode() {
     if (tcgetattr(STDIN_FILENO, &orig_termios) == -1) {
-        fprintf(stderr, "tcgetattr failed\n");
+        perror("tcgetattr");
         exit(EXIT_FAILURE);
     }
-    atexit(disableRawMode);
+
+
+    atexit(restoreTerminal);
 
     struct termios raw = orig_termios;
+
+
     raw.c_lflag &= ~(ECHO | ICANON);
+
 
     raw.c_cc[VMIN]  = 1;
     raw.c_cc[VTIME] = 0;
 
+
+    raw.c_iflag |= ICRNL;  
+    raw.c_oflag |= OPOST; 
+
     if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == -1) {
-        fprintf(stderr, "tcsetattr failed\n");
+        perror("tcsetattr");
         exit(EXIT_FAILURE);
     }
 }
@@ -57,7 +66,8 @@ void print_help(const char *prog) {
 
 int main(int argc, char *argv[]) {
 
-    if (argc > 1 && (strcmp(argv[1], "--help") == 0 || strcmp(argv[1], "-h") == 0)) {
+    if (argc > 1 && (strcmp(argv[1], "--help") == 0 ||
+                     strcmp(argv[1], "-h") == 0)) {
         print_help(argv[0]);
         return EXIT_SUCCESS;
     }
@@ -99,8 +109,8 @@ int main(int argc, char *argv[]) {
                 }
 
                 case CEOF:
-                    if (line[0] == 0) { 
-                        exit(EXIT_SUCCESS); 
+                    if (line[0] == 0) {
+                        return EXIT_SUCCESS;  
                     }
                     break;
 
@@ -113,12 +123,13 @@ int main(int argc, char *argv[]) {
                 putchar('\n');
                 len = 0;
             }
+
             line[len++] = c;
-            line[len] = 0;
+            line[len]   = 0;
             putchar(c);
         }
 
-        fflush(stdout); 
+        fflush(stdout);
     }
 
     return EXIT_SUCCESS;
