@@ -6,10 +6,10 @@
 #include <ctype.h>
 #include <fcntl.h>
 #include <aio.h>
-#include <pthread.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <time.h>
+#include <errno.h>
 
 #define SOCKET_PATH "./socket"
 #define MAX_CLIENTS 1024
@@ -23,11 +23,9 @@ struct client
     char buffer[BUFFER_SIZE];
 } clients[MAX_CLIENTS];
 
-int server_fd;
 volatile int total_connected = 0;
 volatile int total_finished = 0;
 volatile int first_client_connected = 0;
-
 _Atomic int active_clients = 0;
 
 struct timespec start_time, end_time;
@@ -54,7 +52,16 @@ void aio_completion_handler(union sigval sv)
         for (ssize_t j = 0; j < n; j++)
             c->buffer[j] = toupper((unsigned char)c->buffer[j]);
         write(STDOUT_FILENO, c->buffer, n);
-        aio_read(cb);
+
+        // Снова читаем асинхронно
+        if (aio_read(&c->cb) < 0)
+        {
+            perror("aio_read");
+            close(c->fd);
+            c->fd = -1;
+            total_finished++;
+            active_clients--;
+        }
     }
     else
     {
@@ -72,14 +79,35 @@ void aio_completion_handler(union sigval sv)
 
 int main()
 {
+    int server_fd;
+    struct sockaddr_un addr;
+
     unlink(SOCKET_PATH);
+
     server_fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (server_fd < 0)
+    {
+        perror("socket");
+        exit(1);
+    }
+
     fcntl(server_fd, F_SETFL, O_NONBLOCK);
-    struct sockaddr_un addr = {.sun_family = AF_UNIX};
+
+    memset(&addr, 0, sizeof(addr));
+    addr.sun_family = AF_UNIX;
     strncpy(addr.sun_path, SOCKET_PATH, sizeof(addr.sun_path) - 1);
 
-    bind(server_fd, (struct sockaddr *)&addr, sizeof(addr));
-    listen(server_fd, 512);
+    if (bind(server_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0)
+    {
+        perror("bind");
+        exit(1);
+    }
+
+    if (listen(server_fd, 512) < 0)
+    {
+        perror("listen");
+        exit(1);
+    }
 
     for (int i = 0; i < MAX_CLIENTS; i++)
         clients[i].fd = -1;
@@ -88,13 +116,13 @@ int main()
 
     while (total_finished < TARGET_CLIENTS)
     {
-        int fd;
-        while ((fd = accept(server_fd, NULL, NULL)) != -1)
+        int fd = accept(server_fd, NULL, NULL);
+        if (fd >= 0)
         {
             if (total_connected >= MAX_CLIENTS)
             {
                 close(fd);
-                break;
+                continue;
             }
 
             for (int i = 0; i < MAX_CLIENTS; i++)
@@ -109,7 +137,7 @@ int main()
                     {
                         clock_gettime(CLOCK_MONOTONIC, &start_time);
                         first_client_connected = 1;
-                        printf("Первое подключение \n");
+                        printf("Первое подключение\n");
                     }
 
                     memset(&clients[i].cb, 0, sizeof(struct aiocb));
@@ -120,19 +148,25 @@ int main()
                     clients[i].cb.aio_sigevent.sigev_notify_function = aio_completion_handler;
                     clients[i].cb.aio_sigevent.sigev_value.sival_ptr = &clients[i].cb;
 
-                    aio_read(&clients[i].cb);
+                    if (aio_read(&clients[i].cb) < 0)
+                    {
+                        perror("aio_read");
+                        close(fd);
+                        clients[i].fd = -1;
+                        total_connected--;
+                        active_clients--;
+                    }
+
                     break;
                 }
             }
         }
-
-        if (total_connected >= TARGET_CLIENTS && total_connected % 1000 == 999)
+        else if (errno != EAGAIN && errno != EWOULDBLOCK)
         {
-            printf("Подключено: %d  Активно: %d  Завершено: %d\n",
-                   total_connected, (int)active_clients, total_finished);
+            perror("accept");
         }
 
-        usleep(10000);
+        usleep(1000); // немного снижаем нагрузку на CPU
     }
 
     double time_elapsed = (end_time.tv_sec - start_time.tv_sec) +
