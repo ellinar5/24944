@@ -3,7 +3,6 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <ctype.h>
-#include <sys/ttydefaults.h>
 #include <string.h>
 
 #ifndef CERASE
