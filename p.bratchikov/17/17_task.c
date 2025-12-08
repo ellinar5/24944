@@ -1,5 +1,5 @@
 #include <unistd.h>
-#include <sys/termios.h>
+#include <termios.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <ctype.h>
