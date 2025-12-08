@@ -1,2 +1,2 @@
-for i in {1..1000}; do ./client & done
-wait
+./server &
+for i in {1..100}; do ./client & done; wait

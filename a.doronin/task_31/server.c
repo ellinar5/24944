@@ -11,7 +11,7 @@
 #define SOCKET_PATH "./socket"
 #define BUFFER_SIZE 4096
 #define MAX_CLIENTS 10240
-#define TARGET_CLIENTS 1000
+#define TARGET_CLIENTS 100
 
 int main()
 {
