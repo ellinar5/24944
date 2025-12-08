@@ -1,5 +1,5 @@
-#include <termios.h>     // ВАЖНО: правильный заголовок для Solaris + Linux
-#include <unistd.h>      // read(), STDIN_FILENO
+#include <termios.h>     
+#include <unistd.h>      
 #include <stdlib.h>
 #include <stdio.h>
 #include <ctype.h>
@@ -41,7 +41,6 @@ void enableRawMode() {
     struct termios raw = orig_termios;
     raw.c_lflag &= ~(ECHO | ICANON);
 
-    // Solaris: обязательно выставить VMIN и VTIME
     raw.c_cc[VMIN]  = 1;
     raw.c_cc[VTIME] = 0;
 
@@ -119,7 +118,7 @@ int main(int argc, char *argv[]) {
             putchar(c);
         }
 
-        fflush(stdout); // Solaris-friendly
+        fflush(stdout); 
     }
 
     return EXIT_SUCCESS;
