@@ -1,5 +1,5 @@
-#include <unistd.h>
-#include <termios.h>
+#include <termios.h>     // ВАЖНО: правильный заголовок для Solaris + Linux
+#include <unistd.h>      // read(), STDIN_FILENO
 #include <stdlib.h>
 #include <stdio.h>
 #include <ctype.h>
@@ -40,6 +40,11 @@ void enableRawMode() {
 
     struct termios raw = orig_termios;
     raw.c_lflag &= ~(ECHO | ICANON);
+
+    // Solaris: обязательно выставить VMIN и VTIME
+    raw.c_cc[VMIN]  = 1;
+    raw.c_cc[VTIME] = 0;
+
     if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == -1) {
         fprintf(stderr, "tcsetattr failed\n");
         exit(EXIT_FAILURE);
@@ -52,6 +57,7 @@ void print_help(const char *prog) {
 }
 
 int main(int argc, char *argv[]) {
+
     if (argc > 1 && (strcmp(argv[1], "--help") == 0 || strcmp(argv[1], "-h") == 0)) {
         print_help(argv[0]);
         return EXIT_SUCCESS;
@@ -64,8 +70,10 @@ int main(int argc, char *argv[]) {
 
     while (read(STDIN_FILENO, &c, 1) == 1) {
         int len = strlen(line);
-        if (iscntrl(c) || !isprint(c)) {
+
+        if (iscntrl((unsigned char)c) || !isprint((unsigned char)c)) {
             switch (c) {
+
                 case CERASE:
                     if (len > 0) {
                         line[len - 1] = 0;
@@ -82,9 +90,8 @@ int main(int argc, char *argv[]) {
                     int word_start = 0;
                     char prev = ' ';
                     for (int i = 0; i < len; i++) {
-                        if (line[i] != ' ' && prev == ' ') {
+                        if (line[i] != ' ' && prev == ' ')
                             word_start = i;
-                        }
                         prev = line[i];
                     }
                     line[word_start] = 0;
@@ -93,7 +100,9 @@ int main(int argc, char *argv[]) {
                 }
 
                 case CEOF:
-                    if (line[0] == 0) { exit(EXIT_SUCCESS); }
+                    if (line[0] == 0) { 
+                        exit(EXIT_SUCCESS); 
+                    }
                     break;
 
                 default:
@@ -109,7 +118,8 @@ int main(int argc, char *argv[]) {
             line[len] = 0;
             putchar(c);
         }
-        fflush(NULL);
+
+        fflush(stdout); // Solaris-friendly
     }
 
     return EXIT_SUCCESS;
