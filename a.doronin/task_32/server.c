@@ -165,8 +165,6 @@ int main()
         {
             perror("accept");
         }
-
-        usleep(1000); // немного снижаем нагрузку на CPU
     }
 
     double time_elapsed = (end_time.tv_sec - start_time.tv_sec) +
