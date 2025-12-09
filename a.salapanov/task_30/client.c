@@ -1,60 +1,57 @@
 // client.c
 #define _GNU_SOURCE
+
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
 #include <unistd.h>
+#include <string.h>
 #include <sys/socket.h>
 #include <sys/un.h>
-#include <errno.h>
 
-#define SOCK_PATH "/tmp/uds_echo.sock"
-#define BUF_SIZE 4096
+#define SOCKET_PATH "/tmp/uds_echo.sock"
 
-int main(void) {
-    int sock_fd = -1;
-    struct sockaddr_un addr;
-    char buf[BUF_SIZE];
-    ssize_t n;
+int main(void)
+{
+    int client_fd;
+    struct sockaddr_un server_addr;
 
-    // 1. Создаём сокет
-    sock_fd = socket(AF_UNIX, SOCK_STREAM, 0);
-    if (sock_fd == -1) {
+    client_fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (client_fd == -1) {
         perror("socket");
         exit(EXIT_FAILURE);
     }
 
-    // 2. Заполняем адрес
-    memset(&addr, 0, sizeof(struct sockaddr_un));
-    addr.sun_family = AF_UNIX;
-    strncpy(addr.sun_path, SOCK_PATH, sizeof(addr.sun_path) - 1);
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sun_family = AF_UNIX;
+    strncpy(server_addr.sun_path, SOCKET_PATH, sizeof(server_addr.sun_path) - 1);
 
-    // 3. Подключаемся к серверу
-    if (connect(sock_fd, (struct sockaddr*)&addr, sizeof(struct sockaddr_un)) == -1) {
+    if (connect(client_fd, (struct sockaddr *)&server_addr, sizeof(server_addr)) == -1) {
         perror("connect");
-        close(sock_fd);
+        close(client_fd);
         exit(EXIT_FAILURE);
     }
 
-    // 4. Читаем из stdin и отправляем на сервер
-    while ((n = read(STDIN_FILENO, buf, BUF_SIZE)) > 0) {
-        ssize_t sent = 0;
-        while (sent < n) {
-            ssize_t s = write(sock_fd, buf + sent, n - sent);
-            if (s == -1) {
-                perror("write");
-                close(sock_fd);
-                exit(EXIT_FAILURE);
-            }
-            sent += s;
+    printf("Connected to server\n");
+
+    char *messages[] = {
+        "Message 1: hello, server!\n",
+        "Message 2: Unix domain sockets test\n",
+        "Message 3: echo me back, please\n",
+        "Message 4: almost done\n",
+        "Message 5: goodbye!\n"
+    };
+
+    for (int i = 0; i < 5; i++) {
+        ssize_t len = strlen(messages[i]);
+        if (write(client_fd, messages[i], len) != len) {
+            perror("write");
+            close(client_fd);
+            exit(EXIT_FAILURE);
         }
+        sleep(1);
     }
 
-    if (n == -1) {
-        perror("read");
-    }
-
-    // 5. Закрываем соединение (сервер после этого завершится)
-    close(sock_fd);
+    close(client_fd);
+    printf("Client finished\n");
     return 0;
 }

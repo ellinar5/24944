@@ -2,131 +2,144 @@
 #define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
+#include <unistd.h>
 #include <ctype.h>
 #include <string.h>
-#include <unistd.h>
 #include <sys/socket.h>
 #include <sys/un.h>
-#include <errno.h>
-#include <sys/types.h>
+#include <sys/select.h>
+#include <sys/time.h>
 
-#define SOCK_PATH "/tmp/uds_echo.sock"
-#define BUF_SIZE 4096
+#define SOCKET_PATH "/tmp/uds_echo.sock"
+#define BUFFER_SIZE 4096
+#define MAX_CLIENTS 1024
 
-int main(void) {
-    int server_fd = -1;
-    struct sockaddr_un addr;
-    fd_set master_set;   // все интересующие нас дескрипторы
-    fd_set read_set;     // временный набор на каждый select
-    int max_fd;          // максимальный номер дескриптора
-    char buf[BUF_SIZE];
+int main() {
+    int server_fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    struct sockaddr_un addr = {0};
+    fd_set readfds, allfds;
+    int clients[MAX_CLIENTS] = {0};
+    int max_fd = server_fd;
+    char buf[BUFFER_SIZE];
+    int total_clients = 0, finished_clients = 0;
+    
+    struct timeval start_time, first_msg_time, last_msg_time;
+    gettimeofday(&start_time, NULL);
+    int first_msg_received = 0;
 
-    // 1. Создаём серверный сокет
-    server_fd = socket(AF_UNIX, SOCK_STREAM, 0);
     if (server_fd == -1) {
         perror("socket");
         exit(EXIT_FAILURE);
     }
 
-    // 2. Удаляем старый файл сокета, если остался
-    unlink(SOCK_PATH);
-
-    // 3. Заполняем структуру адреса
-    memset(&addr, 0, sizeof(struct sockaddr_un));
+    unlink(SOCKET_PATH);
     addr.sun_family = AF_UNIX;
-    strncpy(addr.sun_path, SOCK_PATH, sizeof(addr.sun_path) - 1);
+    strncpy(addr.sun_path, SOCKET_PATH, sizeof(addr.sun_path) - 1);
 
-    // 4. bind
-    if (bind(server_fd, (struct sockaddr*)&addr, sizeof(struct sockaddr_un)) == -1) {
+    if (bind(server_fd, (struct sockaddr*)&addr, sizeof(addr)) == -1) {
         perror("bind");
         close(server_fd);
         exit(EXIT_FAILURE);
     }
 
-    // 5. listen
-    if (listen(server_fd, SOMAXCONN) == -1) {
+    if (listen(server_fd, 128) == -1) {
         perror("listen");
         close(server_fd);
-        unlink(SOCK_PATH);
+        unlink(SOCKET_PATH);
         exit(EXIT_FAILURE);
     }
 
-    // 6. Инициализируем набор дескрипторов
-    FD_ZERO(&master_set);
-    FD_SET(server_fd, &master_set);
-    max_fd = server_fd;
+    FD_ZERO(&allfds);
+    FD_SET(server_fd, &allfds);
 
-    // Основной цикл сервера
-    for (;;) {
-        read_set = master_set;  // select портит набор, поэтому копируем
+    printf("select-сервер запущен, сокет: %s\n", SOCKET_PATH);
 
-        int ready = select(max_fd + 1, &read_set, NULL, NULL, NULL);
-        if (ready == -1) {
-            if (errno == EINTR)
-                continue;       // сигнал — просто повторим
-            perror("select");
-            break;
-        }
+    while (1) {
+        readfds = allfds;
+        if (select(max_fd + 1, &readfds, NULL, NULL, NULL) <= 0)
+            continue;
 
-        // 1) Проверяем, не пришло ли новое подключение
-        if (FD_ISSET(server_fd, &read_set)) {
-            int client_fd = accept(server_fd, NULL, NULL);
-            if (client_fd == -1) {
-                perror("accept");
+        if (FD_ISSET(server_fd, &readfds)) {
+            int fd = accept(server_fd, NULL, NULL);
+            if (fd != -1) {
+                for (int i = 0; i < MAX_CLIENTS; i++) {
+                    if (clients[i] == 0) {
+                        clients[i] = fd;
+                        FD_SET(fd, &allfds);
+                        if (fd > max_fd) max_fd = fd;
+                        total_clients++;
+                        break;
+                    }
+                }
             } else {
-                FD_SET(client_fd, &master_set);
-                if (client_fd > max_fd)
-                    max_fd = client_fd;
+                perror("accept");
             }
-            if (--ready <= 0)
-                continue; // больше ничего не готово
         }
 
-        // 2) Проверяем существующие клиентские сокеты
-        for (int fd = 0; fd <= max_fd && ready > 0; ++fd) {
-            if (fd == server_fd)
-                continue;
+        for (int i = 0; i < MAX_CLIENTS; i++) {
+            int fd = clients[i];
+            if (fd == 0 || !FD_ISSET(fd, &readfds)) continue;
 
-            if (FD_ISSET(fd, &read_set)) {
-                ssize_t n = read(fd, buf, BUF_SIZE);
+            int n = read(fd, buf, BUFFER_SIZE);
+            if (n <= 0) {
+                close(fd);
+                FD_CLR(fd, &allfds);
+                clients[i] = 0;
+                finished_clients++;
 
-                if (n > 0) {
-                    // Переводим в верхний регистр
-                    for (ssize_t i = 0; i < n; ++i) {
-                        buf[i] = (char)toupper((unsigned char)buf[i]);
+                if (finished_clients >= total_clients && total_clients > 0 && first_msg_received) {
+                    long seconds = last_msg_time.tv_sec - first_msg_time.tv_sec;
+                    long microseconds = last_msg_time.tv_usec - first_msg_time.tv_usec;
+                    if (microseconds < 0) {
+                        seconds--;
+                        microseconds += 1000000L;
                     }
 
-                    // Пишем в stdout (может перемешиваться с другими клиентами — это норм)
-                    ssize_t written = 0;
-                    while (written < n) {
-                        ssize_t w = write(STDOUT_FILENO, buf + written, n - written);
-                        if (w == -1) {
-                            perror("write");
-                            close(fd);
-                            FD_CLR(fd, &master_set);
-                            goto server_cleanup;
-                        }
-                        written += w;
-                    }
-                } else if (n == 0) {
-                    // Клиент закрыл соединение
-                    close(fd);
-                    FD_CLR(fd, &master_set);
-                    // max_fd можно не сжимать — select это переживет
-                } else {
-                    // Ошибка чтения
-                    perror("read");
-                    close(fd);
-                    FD_CLR(fd, &master_set);
+                    printf("\nselect-сервер завершается\n");
+                    printf("Общее время между первым и последним сообщением: %ld.%06ld сек\n",
+                           seconds, microseconds);
+
+                    close(server_fd);
+                    unlink(SOCKET_PATH);
+                    return 0;
+                }
+            } else {
+                struct timeval current_time;
+                gettimeofday(&current_time, NULL);
+
+                long seconds = current_time.tv_sec - start_time.tv_sec;
+                long microseconds = current_time.tv_usec - start_time.tv_usec;
+                if (microseconds < 0) {
+                    seconds--;
+                    microseconds += 1000000L;
                 }
 
-                --ready;
+                if (!first_msg_received) {
+                    first_msg_time = current_time;
+                    first_msg_received = 1;
+                }
+                last_msg_time = current_time;
+
+                char time_buf[32];
+                int time_len = snprintf(time_buf, sizeof(time_buf),
+                                        "[%ld.%03ld] ",
+                                        seconds,
+                                        microseconds / 1000);
+                write(STDOUT_FILENO, time_buf, time_len);
+
+                for (int j = 0; j < n; j++) {
+                    buf[j] = toupper((unsigned char)buf[j]);
+                }
+                write(STDOUT_FILENO, buf, n);
+
+                if (n > 0 && buf[n - 1] != '\n') {
+                    write(STDOUT_FILENO, "\n", 1);
+                }
             }
         }
     }
 
-server_cleanup:
     close(server_fd);
-    unlink(SOCK_PATH);
+    unlink(SOCKET_PATH);
     return 0;
 }
