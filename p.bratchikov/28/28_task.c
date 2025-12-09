@@ -27,7 +27,7 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    int pipe_to_sort[2];
+    int pipe_to_sort[2];     
     int pipe_from_sort[2];   
 
     if (pipe(pipe_to_sort) == -1 || pipe(pipe_from_sort) == -1) {
@@ -43,30 +43,31 @@ int main(int argc, char* argv[]) {
 
     if (pid == 0) {
         dup2(pipe_to_sort[0], STDIN_FILENO);
-
-        
         dup2(pipe_from_sort[1], STDOUT_FILENO);
-
 
         close(pipe_to_sort[1]);
         close(pipe_from_sort[0]);
 
-
         execlp("sort", "sort", "-n", NULL);
-
         perror("execlp");
         exit(EXIT_FAILURE);
     }
 
-
     close(pipe_to_sort[0]);
     close(pipe_from_sort[1]);
 
+    FILE *sort_in = fdopen(pipe_to_sort[1], "w");
+    if (!sort_in) {
+        perror("fdopen");
+        return EXIT_FAILURE;
+    }
+
     srand(time(NULL));
     for (int i = 0; i < 100; i++) {
-        dprintf(pipe_to_sort[1], "%d\n", rand() % 100);
+        fprintf(sort_in, "%d\n", rand() % 100);
     }
-    close(pipe_to_sort[1]);
+
+    fclose(sort_in); 
 
     char c;
     int count = 0;
