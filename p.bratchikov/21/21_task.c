@@ -1,20 +1,23 @@
+#define _POSIX_C_SOURCE 200809L
+
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
+
 
 static volatile sig_atomic_t count = 0;
-static volatile sig_atomic_t using_sigaction = 0;
 
 void handle_sigint(int sig) {
-    if (!using_sigaction) signal(SIGINT, handle_sigint);
-    printf("\a");
+    (void)sig; 
+    printf("\a"); 
     fflush(stdout);
     count++;
 }
 
 void handle_sigquit(int sig) {
-    if (!using_sigaction) signal(SIGQUIT, handle_sigquit);
+    (void)sig;
     printf("\nThe signal sounded %d times.\n", (int)count);
     exit(EXIT_SUCCESS);
 }
@@ -37,31 +40,28 @@ int main(int argc, char **argv) {
     }
 
     struct sigaction sa;
+
     memset(&sa, 0, sizeof(sa));
     sa.sa_handler = handle_sigint;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
     if (sigaction(SIGINT, &sa, NULL) == -1) {
-        if (signal(SIGINT, handle_sigint) == SIG_ERR) {
-            fprintf(stderr, "Error: cannot set SIGINT handler\n");
-            return EXIT_FAILURE;
-        }
-        using_sigaction = 0;
-    } else {
-        using_sigaction = 1;
+        perror("sigaction SIGINT");
+        return EXIT_FAILURE;
     }
 
     memset(&sa, 0, sizeof(sa));
     sa.sa_handler = handle_sigquit;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
     if (sigaction(SIGQUIT, &sa, NULL) == -1) {
-        if (signal(SIGQUIT, handle_sigquit) == SIG_ERR) {
-            fprintf(stderr, "Error: cannot set SIGQUIT handler\n");
-            return EXIT_FAILURE;
-        }
-        using_sigaction = 0;
-    } else {
-        using_sigaction = 1;
+        perror("sigaction SIGQUIT");
+        return EXIT_FAILURE;
     }
 
-    while (1);
+    while (1) {
+        pause(); 
+    }
 
     return EXIT_SUCCESS;
 }
