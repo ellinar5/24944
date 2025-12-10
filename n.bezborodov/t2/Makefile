@@ -1,3 +1,3 @@
 all:
-	gcc one.c -o time
+	gcc time.c -o time
 	./time
