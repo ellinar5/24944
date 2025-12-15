@@ -6,41 +6,49 @@
 #include <sys/un.h>
 
 #define SOCKET_PATH "./socket"
+#define BUFFER_SIZE 256
 
 int main()
 {
     int sock_fd;
     struct sockaddr_un addr;
 
-    sock_fd = socket(AF_UNIX, SOCK_STREAM, 0);
-    if (sock_fd < 0)
+    if ((sock_fd = socket(AF_UNIX, SOCK_STREAM, 0)) == -1)
     {
         perror("socket");
-        exit(1);
+        exit(EXIT_FAILURE);
     }
 
     memset(&addr, 0, sizeof(addr));
     addr.sun_family = AF_UNIX;
     strncpy(addr.sun_path, SOCKET_PATH, sizeof(addr.sun_path) - 1);
 
-    if (connect(sock_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0)
+    if (connect(sock_fd, (struct sockaddr *)&addr, sizeof(addr)) == -1)
     {
         perror("connect");
         close(sock_fd);
-        exit(1);
+        exit(EXIT_FAILURE);
     }
 
-    char *messages[] = {"Hello world!\n", "Test message!\n", NULL};
+    char *messages[] = {
+        "K1 Programming is fun!\n",
+        "K1 Unix pipes are awesome!\n",
+        "K1 Process communication rocks!\n",
+        "K1 C language forever!\n",
+        "K1 Goodbye world!\n",
+        NULL};
+
     for (int i = 0; messages[i] != NULL; i++)
     {
-        if (write(sock_fd, messages[i], strlen(messages[i])) < 0)
+        if (write(sock_fd, messages[i], strlen(messages[i])) == -1)
         {
             perror("write");
             break;
         }
-        usleep(1000);
+        usleep(3000);
     }
 
     close(sock_fd);
+
     return 0;
 }
