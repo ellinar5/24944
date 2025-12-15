@@ -6,83 +6,50 @@
 #include <sys/un.h>
 #include <time.h>
 
-#define SOCK_PATH "/tmp/uppercase_socket"
-#define RUNTIME_SECONDS 10
+#define SOCKET_PATH "./socket"
+#define BUFFER_SIZE 256
 
-int init_client_socket()
+int main()
 {
-    int sock = socket(AF_UNIX, SOCK_STREAM, 0);
-    if (sock < 0)
+    int sock_fd;
+    struct sockaddr_un addr;
+
+    if ((sock_fd = socket(AF_UNIX, SOCK_STREAM, 0)) == -1)
     {
-        perror("Не удалось создать клиентский сокет");
+        perror("socket");
         exit(EXIT_FAILURE);
     }
-    return sock;
-}
 
-void establish_connection(int sock)
-{
-    struct sockaddr_un addr;
     memset(&addr, 0, sizeof(addr));
     addr.sun_family = AF_UNIX;
-    strncpy(addr.sun_path, SOCK_PATH, sizeof(addr.sun_path) - 1);
+    strncpy(addr.sun_path, SOCKET_PATH, sizeof(addr.sun_path) - 1);
 
-    if (connect(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0)
+    if (connect(sock_fd, (struct sockaddr *)&addr, sizeof(addr)) == -1)
     {
-        perror("Сбой подключения к серверу");
-        close(sock);
+        perror("connect");
+        close(sock_fd);
         exit(EXIT_FAILURE);
     }
-}
 
-int main(int argc, char *argv[])
-{
-    int client_sock;
-    time_t start_time;
-    pid_t pid = getpid();
-
-    char *data[] = {
+    char *messages[] = {
+        "Lu-lu-lu\n",
         "Pu-pu-pu\n",
-        "Lu-pu-li\n",
-        "Tu-re-tu\n"};
-    int data_count = sizeof(data) / sizeof(data[0]);
-    int current_index = 0;
+        "Tu-tu-tu\n",
+        "Du-du-du\n",
+        "Ku-ku-ki\n",
+        NULL};
 
-    srand(time(NULL) + pid);
-
-    printf("=== Клиент PID: %d ===\n", pid);
-
-    client_sock = init_client_socket();
-    establish_connection(client_sock);
-
-    printf("Соединение с сервером успешно установлено!\n");
-    printf("Клиент будет работать %d секунд\n\n", RUNTIME_SECONDS);
-
-    start_time = time(NULL);
-
-    while (difftime(time(NULL), start_time) < RUNTIME_SECONDS)
+    for (int i = 0; messages[i] != NULL; i++)
     {
-        char *current_message = data[current_index];
-
-        size_t data_len = strlen(current_message);
-        if (write(client_sock, current_message, data_len) != (ssize_t)data_len)
+        if (write(sock_fd, messages[i], strlen(messages[i])) == -1)
         {
-            perror("Ошибка передачи данных");
-            close(client_sock);
-            exit(EXIT_FAILURE);
+            perror("write");
+            break;
         }
-
-        printf("Отправлено: %s", current_message);
-
-        current_index = (current_index + 1) % data_count;
-
-        int delay_ms = 500 + (rand() % 1000);
-        usleep(delay_ms * 1000);
+        usleep(10000);
     }
 
-    printf("\nКлиент PID: %d завершил работу после %d секунд\n", pid, RUNTIME_SECONDS);
-
-    close(client_sock);
+    close(sock_fd);
 
     return 0;
 }

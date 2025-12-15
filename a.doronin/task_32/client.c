@@ -31,11 +31,11 @@ int main()
     }
 
     char *messages[] = {
-        "K1 Programming is fun!\n",
-        "K1 Unix pipes are awesome!\n",
-        "K1 Process communication rocks!\n",
-        "K1 C language forever!\n",
-        "K1 Goodbye world!\n",
+        "Lu-lu-lu\n",
+        "Pu-pu-pu\n",
+        "Tu-tu-tu\n",
+        "Du-du-du\n",
+        "Ku-ku-ki\n",
         NULL};
 
     for (int i = 0; messages[i] != NULL; i++)
