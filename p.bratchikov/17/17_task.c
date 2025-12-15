@@ -5,10 +5,22 @@
 #include <ctype.h>
 #include <string.h>
 
-#define CERASE  0x7F
-#define CKILL   0x15
+#ifndef CERASE
+#define CERASE 0x7F
+#endif
+
+#ifndef CKILL
+#define CKILL 0x15
+#endif
+
+#ifndef CWERASE
 #define CWERASE 0x17
-#define CEOF    0x04
+#endif
+
+#ifndef CEOF
+#define CEOF 0x04
+#endif
+
 
 #define LINE_LENGTH 40
 
