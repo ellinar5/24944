@@ -71,7 +71,7 @@ int main(int argc, char *argv[]) {
         return EXIT_FAILURE;
     }
 
-    char cmd[FILENAME_MAX * 2] = "vim ";
+    char cmd[FILENAME_MAX * 2] = "nano ";
     if (strlen(filename) >= FILENAME_MAX) {
         fprintf(stderr, "Error: filename is too long.\n");
         close(fd);
@@ -82,7 +82,7 @@ int main(int argc, char *argv[]) {
 
     int sysret = system(cmd);
     if (sysret == -1) {
-        fprintf(stderr, "Error: failed to run vim: %s\n", strerror(errno));
+        fprintf(stderr, "Error: failed to run nano: %s\n", strerror(errno));
         lock.l_type = F_UNLCK;
         fcntl(fd, F_SETLK, &lock);
         close(fd);
