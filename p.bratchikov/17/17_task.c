@@ -5,128 +5,139 @@
 #include <ctype.h>
 #include <string.h>
 
-#ifndef CERASE
-#define CERASE 0x7F
-#endif
-
-#ifndef CKILL
-#define CKILL 0x15
-#endif
-
-#ifndef CWERASE
+#define CERASE  0x7F
+#define CKILL   0x15
 #define CWERASE 0x17
-#endif
-
-#ifndef CEOF
-#define CEOF 0x04
-#endif
+#define CEOF    0x04
 
 #define LINE_LENGTH 40
 
-static struct termios orig_termios;
+static struct termios orig;
 
-
-void restoreTerminal() {
-    tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios);
+void restore(void) {
+    if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig) == -1) {
+        perror("tcsetattr restore");
+        exit(EXIT_FAILURE);
+    }
 }
 
-
-void enableRawMode() {
-    if (tcgetattr(STDIN_FILENO, &orig_termios) == -1) {
+void raw_mode(void) {
+    if (tcgetattr(STDIN_FILENO, &orig) == -1) {
         perror("tcgetattr");
         exit(EXIT_FAILURE);
     }
 
+    atexit(restore);
 
-    atexit(restoreTerminal);
+    struct termios t = orig;
+    t.c_lflag &= ~(ECHO | ICANON);
+    t.c_cc[VMIN] = 1;
+    t.c_cc[VTIME] = 0;
 
-    struct termios raw = orig_termios;
-
-
-    raw.c_lflag &= ~(ECHO | ICANON);
-
-
-    raw.c_cc[VMIN]  = 1;
-    raw.c_cc[VTIME] = 0;
-
-
-    raw.c_iflag |= ICRNL;  
-    raw.c_oflag |= OPOST; 
-
-    if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == -1) {
+    if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &t) == -1) {
         perror("tcsetattr");
         exit(EXIT_FAILURE);
     }
 }
 
 void print_help(const char *prog) {
-    printf("This program reads input in raw mode with line editing.\n");
     printf("Usage: %s [--help|-h]\n", prog);
+    printf("Reads input in raw mode with line editing:\n");
+    printf("  Backspace        - erase last character\n");
+    printf("  Ctrl-U           - erase entire line\n");
+    printf("  Ctrl-W           - erase last word + following spaces\n");
+    printf("  Ctrl-D at line start - exit program\n");
+    printf("  Other non-printable - beep (Ctrl-G)\n");
+    printf("  Max line length: 40 characters; words longer than remaining space are moved to next line\n");
 }
 
 int main(int argc, char *argv[]) {
-
-    if (argc > 1 && (strcmp(argv[1], "--help") == 0 ||
-                     strcmp(argv[1], "-h") == 0)) {
-        print_help(argv[0]);
-        return EXIT_SUCCESS;
+    if (argc > 1) {
+        if (strcmp(argv[1], "--help") == 0 || strcmp(argv[1], "-h") == 0) {
+            print_help(argv[0]);
+            return EXIT_SUCCESS;
+        } else {
+            fprintf(stderr, "Error: unknown argument '%s'\n", argv[1]);
+            fprintf(stderr, "Use --help or -h for usage\n");
+            return EXIT_FAILURE;
+        }
     }
 
-    enableRawMode();
+    raw_mode();
+
+    char line[LINE_LENGTH + 1] = {0};
+    int len = 0;
+    int word_start = 0;
 
     char c;
-    static char line[LINE_LENGTH + 1];
+    while (1) {
+        ssize_t n = read(STDIN_FILENO, &c, 1);
+        if (n == -1) {
+            perror("read");
+            return EXIT_FAILURE;
+        } else if (n == 0) {
+            continue;
+        }
 
-    while (read(STDIN_FILENO, &c, 1) == 1) {
-        int len = strlen(line);
+        if (isprint((unsigned char)c)) {
 
-        if (iscntrl((unsigned char)c) || !isprint((unsigned char)c)) {
+            if (len == 0 || line[len - 1] == ' ')
+                word_start = len;
+
+            line[len++] = c;
+            line[len] = 0;
+            putchar(c);
+
+            if (len > LINE_LENGTH) {
+                int word_len = len - word_start;
+
+                
+                for (int i = 0; i < word_len; i++)
+                    printf("\b \b");
+
+                putchar('\n');
+
+                
+                memmove(line, line + word_start, word_len);
+                line[word_len] = 0;
+                printf("%s", line);
+
+                len = word_len;
+                word_start = 0;
+            }
+
+        } else {
             switch (c) {
 
                 case CERASE:
                     if (len > 0) {
-                        line[len - 1] = 0;
-                        printf("\33[D\33[K");
+                        line[--len] = 0;
+                        printf("\b \b");
                     }
                     break;
 
                 case CKILL:
+                    while (len > 0)
+                        printf("\b \b"), len--;
                     line[0] = 0;
-                    printf("\33[2K\r");
                     break;
 
-                case CWERASE: {
-                    int word_start = 0;
-                    char prev = ' ';
-                    for (int i = 0; i < len; i++) {
-                        if (line[i] != ' ' && prev == ' ')
-                            word_start = i;
-                        prev = line[i];
-                    }
-                    line[word_start] = 0;
-                    printf("\33[%dD\33[K", len - word_start);
+                case CWERASE:
+                    while (len > 0 && line[len - 1] == ' ')
+                        printf("\b \b"), len--;
+                    while (len > 0 && line[len - 1] != ' ')
+                        printf("\b \b"), len--;
+                    line[len] = 0;
                     break;
-                }
 
                 case CEOF:
-                    if (line[0] == 0) {
-                        return EXIT_SUCCESS;  
-                    }
+                    if (len == 0)
+                        return EXIT_SUCCESS;
                     break;
 
                 default:
                     putchar('\a');
-                    break;
             }
-        } else {
-            if (len == LINE_LENGTH) {
-                putchar('\n');
-                len = 0;
-            }
-
-            line[len++] = c;
-            line[len]   = 0;
-            putchar(c);
         }
 
         fflush(stdout);
