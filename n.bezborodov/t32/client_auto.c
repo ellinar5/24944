@@ -68,7 +68,7 @@ int main(void) {
 
         /* Можно сделать любую автогенерацию текста */
         int len = snprintf(msg, sizeof(msg),
-                           "client pid=%ld: hello #%llu AbCdEfGhIjK!\n",
+                           "client pid=%ld: asalam aleykym #%llu AbCdEfGhIjK!\n",
                            (long)pid, counter);
 
         if (len < 0) break;
