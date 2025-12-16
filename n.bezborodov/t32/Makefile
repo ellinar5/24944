@@ -1,25 +1,24 @@
-CC=gcc
-CFLAGS=-Wall -Wextra -O2 -std=c99
+# Makefile (Solaris make)
 
-SERVER=server
-CLIENT=client
+CC = cc
+CFLAGS = -O2
+LDFLAGS = -lsocket -lnsl
+
+SERVER_SRC = server-select.c
+CLIENT_SRC = client_auto.c
+
+SERVER = server
+CLIENT = client
+
+.PHONY: all clean
 
 all: $(SERVER) $(CLIENT)
 
-server: server_async.c
-	$(CC) $(CFLAGS) -o server server_async.c -lrt -laio
+$(SERVER): $(SERVER_SRC)
+	$(CC) $(CFLAGS) -o $@ $(SERVER_SRC) $(LDFLAGS)
 
-$(CLIENT): client.c
-	$(CC) $(CFLAGS) -o $(CLIENT) client.c
-
-demo: all
-	./$(SERVER) & \
-	sleep 1; \
-	( echo "client1: hello"; sleep 1; echo "client1: bye" ) | ./$(CLIENT) & \
-	( echo "client2: abc";   sleep 1; echo "client2: def" ) | ./$(CLIENT) & \
-	wait; \
-	kill $$! 2>/dev/null || true
+$(CLIENT): $(CLIENT_SRC)
+	$(CC) $(CFLAGS) -o $@ $(CLIENT_SRC) $(LDFLAGS)
 
 clean:
-	rm -f $(SERVER) $(CLIENT)
-	rm -f /tmp/uds_upper.sock
+	rm -f $(SERVER) $(CLIENT) *.o
