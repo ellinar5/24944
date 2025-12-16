@@ -1,6 +1,6 @@
 CC = gcc
 CFLAGS = -Wall -Wextra
-TARGET = task.out
+TARGET = task
 SRC = task.c
 
 all: $(TARGET)
