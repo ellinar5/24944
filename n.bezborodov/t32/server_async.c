@@ -1,11 +1,9 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/un.h>
-#include <sys/select.h> 
 
-#include <sys/stropts.h>   /* I_SETSIG */
-#include <sys/ioctl.h>
-
+#include <aio.h>
+#include <signal.h>
 #include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -13,16 +11,24 @@
 #include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <signal.h>
 
 #define SOCK_PATH "/tmp/uds_upper.sock"
-#define BUF_SIZE  1024
+#define MAX_CLIENTS 128
+#define BUF_SIZE 1024
+#define AIO_SIG  SIGUSR1
 
-static volatile sig_atomic_t got_sig = 0;
+struct client_state {
+    int fd;
+    int used;
+    char buf[BUF_SIZE];
+    struct aiocb cb;
+};
 
-static void on_sigpoll(int signo) {
+static volatile sig_atomic_t got_aio = 0;
+
+static void on_aio(int signo) {
     (void)signo;
-    got_sig = 1;
+    got_aio = 1;
 }
 
 static void die(const char *msg) {
@@ -30,33 +36,45 @@ static void die(const char *msg) {
     exit(1);
 }
 
-static void set_nonblock(int fd) {
+static int set_nonblock(int fd) {
     int fl = fcntl(fd, F_GETFL, 0);
-    if (fl < 0) die("fcntl(F_GETFL)");
-    if (fcntl(fd, F_SETFL, fl | O_NONBLOCK) < 0)
-        die("fcntl(F_SETFL O_NONBLOCK)");
+    if (fl < 0) return -1;
+    if (fcntl(fd, F_SETFL, fl | O_NONBLOCK) < 0) return -1;
+    return 0;
 }
 
-/* Включаем генерацию SIGPOLL на события ввода/ошибки/разрыва */
-static void enable_sigpoll(int fd) {
-    int events = S_INPUT | S_HIPRI | S_ERROR | S_HANGUP;
-    if (ioctl(fd, I_SETSIG, (char *)&events) < 0) {
-        perror("ioctl(I_SETSIG)");
-        exit(1);
+static void start_aio_read(struct client_state *c) {
+    memset(&c->cb, 0, sizeof(c->cb));
+    c->cb.aio_fildes = c->fd;
+    c->cb.aio_buf = c->buf;
+    c->cb.aio_nbytes = BUF_SIZE;
+    c->cb.aio_offset = 0;
+
+    c->cb.aio_sigevent.sigev_notify = SIGEV_SIGNAL;
+    c->cb.aio_sigevent.sigev_signo = AIO_SIG;
+
+    /* чтобы можно было понять, какой клиент завершился */
+    c->cb.aio_sigevent.sigev_value.sival_ptr = c;
+
+    if (aio_read(&c->cb) < 0) {
+        /* если не получилось — закрываем клиента */
+        c->used = 0;
+        close(c->fd);
     }
 }
-
 
 int main(void) {
     int sfd;
     struct sockaddr_un addr;
-
-    int clients[FD_SETSIZE];
+    struct client_state clients[MAX_CLIENTS];
     int i;
 
-    for (i = 0; i < FD_SETSIZE; i++) clients[i] = 0;
+    for (i = 0; i < MAX_CLIENTS; i++) {
+        clients[i].used = 0;
+        clients[i].fd = -1;
+    }
 
-    signal(SIGPOLL, on_sigpoll);
+    signal(AIO_SIG, on_aio);
 
     sfd = socket(AF_UNIX, SOCK_STREAM, 0);
     if (sfd < 0) die("socket");
@@ -70,15 +88,11 @@ int main(void) {
     if (bind(sfd, (struct sockaddr *)&addr, sizeof(addr)) < 0) die("bind");
     if (listen(sfd, 20) < 0) die("listen");
 
-    set_nonblock(sfd);
-    enable_sigpoll(sfd);
+    /* accept делаем неблокирующим, чтобы можно было периодически принимать новых */
+    if (set_nonblock(sfd) < 0) die("fcntl(O_NONBLOCK)");
 
     while (1) {
-        pause();                 /* ждём SIGPOLL */
-        if (!got_sig) continue;
-        got_sig = 0;
-
-        /* 1) принять всех новых клиентов */
+        /* 1) принимаем всех новых клиентов (если есть) */
         while (1) {
             int cfd = accept(sfd, NULL, NULL);
             if (cfd < 0) {
@@ -86,49 +100,54 @@ int main(void) {
                 die("accept");
             }
 
-            if (cfd >= FD_SETSIZE) {
-                close(cfd);
-                continue;
+            /* ищем слот */
+            for (i = 0; i < MAX_CLIENTS; i++) {
+                if (!clients[i].used) {
+                    clients[i].used = 1;
+                    clients[i].fd = cfd;
+                    start_aio_read(&clients[i]);
+                    break;
+                }
             }
-
-            clients[cfd] = 1;
-            set_nonblock(cfd);
-            enable_sigpoll(cfd);
+            if (i == MAX_CLIENTS) {
+                /* слотов нет */
+                close(cfd);
+            }
         }
 
-        /* 2) читать данные со всех клиентов */
-        for (i = 0; i < FD_SETSIZE; i++) {
-            if (!clients[i]) continue;
+        /* 2) ждём сигнал о завершении AIO */
+        pause();
 
-            while (1) {
-                char buf[BUF_SIZE];
-                int n = (int)read(i, buf, BUF_SIZE);
+        if (!got_aio) continue;
+        got_aio = 0;
 
-                if (n > 0) {
-                    int k;
-                    for (k = 0; k < n; k++)
-                        buf[k] = (char)toupper((unsigned char)buf[k]);
-                    write(1, buf, n);
-                    continue;
+        /* 3) обработка завершённых AIO */
+        for (i = 0; i < MAX_CLIENTS; i++) {
+            struct client_state *c = &clients[i];
+            if (!c->used) continue;
+
+            int err = aio_error(&c->cb);
+            if (err == EINPROGRESS) continue;
+
+            int n = aio_return(&c->cb);
+
+            if (n > 0) {
+                int k;
+                for (k = 0; k < n; k++) {
+                    c->buf[k] = (char)toupper((unsigned char)c->buf[k]);
                 }
+                write(1, c->buf, n);
 
-                if (n == 0) {
-                    close(i);
-                    clients[i] = 0;
-                    break;
-                }
-
-                if (errno == EAGAIN || errno == EWOULDBLOCK)
-                    break;
-
-                close(i);
-                clients[i] = 0;
-                break;
+                /* снова читаем дальше */
+                start_aio_read(c);
+            } else {
+                /* n == 0 -> клиент закрылся, n < 0 -> ошибка */
+                c->used = 0;
+                close(c->fd);
             }
         }
     }
 
-    /* не дойдём */
     close(sfd);
     unlink(SOCK_PATH);
     return 0;
