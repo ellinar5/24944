@@ -4,7 +4,7 @@ CC = cc
 CFLAGS = -O2
 LDFLAGS = -lsocket -lnsl
 
-SERVER_SRC = server-select.c
+SERVER_SRC = server_async.c
 CLIENT_SRC = client_auto.c
 
 SERVER = server
