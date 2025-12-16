@@ -1,82 +1,56 @@
 #define _POSIX_C_SOURCE 200112L
-
 #include <stdio.h>
 #include <stdlib.h>
-#include <signal.h>
 #include <unistd.h>
-#include <sys/types.h>
-#include <string.h>
-#include <errno.h>
+#include <termios.h>
 
-static volatile sig_atomic_t beep_count = 0;
+static struct termios orig_termios;
+static int beep_count = 0;
 
-
-void sigint_handler(int sig)
-{
-    (void)sig;
-    beep_count++;
-
-
-    if (write(STDOUT_FILENO, "\a\nBEEP!\n",8) == -1) {
-    }
+void restore_terminal(void) {
+    tcsetattr(STDIN_FILENO, TCSANOW, &orig_termios);
 }
 
-
-void sigquit_handler(int sig)
-{
-    (void)sig;
-
-    char buf[128];
-    int len = snprintf(buf, sizeof(buf), "\nProgram finished.\nCount of signals: %d\n", beep_count);
-
-    if (len > 0)
-        write(STDOUT_FILENO, buf, (size_t)len);
-
-    _exit(EXIT_SUCCESS);
-}
-
-void print_help(const char *prog)
-{
-    printf("Usage: %s\n", prog);
-    printf("Ctrl+C  - sound signal (beep)\n");
-    printf("Ctrl+\\  - print statistics and exit\n");
-}
-
-int main(int argc, char *argv[])
-{
-
-    if (argc == 2 && (!strcmp(argv[1], "--help") || !strcmp(argv[1], "-h"))) {
-        print_help(argv[0]);
-        return EXIT_SUCCESS;
-    }
-
-    if (argc != 1) {
-        fprintf(stderr, "Invalid arguments. Use --help or -h\n");
+int main() {
+    if (tcgetattr(STDIN_FILENO, &orig_termios) == -1) {
+        perror("tcgetattr");
         return EXIT_FAILURE;
     }
 
-    struct sigaction sa_int, sa_quit;
+    atexit(restore_terminal);
 
+    struct termios raw = orig_termios;
+    raw.c_lflag &= ~(ICANON | ECHO | ISIG); // raw mode
+    raw.c_cc[VMIN] = 1;
+    raw.c_cc[VTIME] = 0;
 
-    sa_int.sa_handler = sigint_handler;
-    sigemptyset(&sa_int.sa_mask);
-    sa_int.sa_flags = 0;
-
-    if (sigaction(SIGINT, &sa_int, NULL) == -1) {
-        perror("sigaction(SIGINT)");
+    if (tcsetattr(STDIN_FILENO, TCSANOW, &raw) == -1) {
+        perror("tcsetattr");
         return EXIT_FAILURE;
     }
 
+    printf("Press Ctrl+C for BEEP, Ctrl+\\ to exit\n");
+    fflush(stdout);
 
-    sa_quit.sa_handler = sigquit_handler;
-    sigemptyset(&sa_quit.sa_mask);
-    sa_quit.sa_flags = 0;
+    char c;
+    while (1) {
+        if (read(STDIN_FILENO, &c, 1) != 1) {
+            perror("read");
+            return EXIT_FAILURE;
+        }
 
-    if (sigaction(SIGQUIT, &sa_quit, NULL) == -1) {
-        perror("sigaction(SIGQUIT)");
-        return EXIT_FAILURE;
+        if (c == 3) { // Ctrl+C
+            beep_count++;
+            write(STDOUT_FILENO, "\aBEEP!\n", 7);
+        } else if (c == 28) { // Ctrl+\
+            char buf[64];
+            int len = snprintf(buf, sizeof(buf),
+                               "Program finished. Count of BEEP: %d\n",
+                               beep_count);
+            write(STDOUT_FILENO, buf, len);
+            return EXIT_SUCCESS;
+        } else {
+            write(STDOUT_FILENO, &c, 1); // печатные символы
+        }
     }
-
-    while (1)
-        pause();
 }
