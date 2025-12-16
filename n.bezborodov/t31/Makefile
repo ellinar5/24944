@@ -1,9 +1,8 @@
-# Makefile (Solaris)
+# Makefile (Solaris make)
 
-CC      ?= cc
-CFLAGS  ?= -O2
-CFLAGS  += -Wall -Wextra
-LDFLAGS ?=
+CC = cc
+CFLAGS = -O2 -Wall -Wextra
+LDFLAGS =
 
 SERVER_SRC = server-select.c
 CLIENT_SRC = client_auto.c
@@ -16,10 +15,10 @@ CLIENT = client
 all: $(SERVER) $(CLIENT)
 
 $(SERVER): $(SERVER_SRC)
-	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(SERVER_SRC) $(LDFLAGS)
 
 $(CLIENT): $(CLIENT_SRC)
-	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(CLIENT_SRC) $(LDFLAGS)
 
 clean:
 	rm -f $(SERVER) $(CLIENT) *.o
