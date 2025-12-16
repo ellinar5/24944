@@ -7,7 +7,7 @@ CLIENT=client
 all: $(SERVER) $(CLIENT)
 
 server: server_async.c
-	$(CC) $(CFLAGS) -o server server_async.c -laio
+	$(CC) $(CFLAGS) -o server server_async.c -lrt -laio
 
 $(CLIENT): client.c
 	$(CC) $(CFLAGS) -o $(CLIENT) client.c
