@@ -1,7 +1,9 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/un.h>
-#include <sys/select.h>
+
+#include <sys/stropts.h>   /* I_SETSIG */
+#include <sys/ioctl.h>
 
 #include <unistd.h>
 #include <stdio.h>
@@ -15,11 +17,11 @@
 #define SOCK_PATH "/tmp/uds_upper.sock"
 #define BUF_SIZE  1024
 
-static volatile sig_atomic_t got_sigio = 0;
+static volatile sig_atomic_t got_sig = 0;
 
-static void on_sigio(int signo) {
+static void on_sigpoll(int signo) {
     (void)signo;
-    got_sigio = 1;   /* в обработчике делаем только флаг */
+    got_sig = 1;
 }
 
 static void die(const char *msg) {
@@ -27,28 +29,30 @@ static void die(const char *msg) {
     exit(1);
 }
 
-static void set_nonblock_async(int fd) {
+static void set_nonblock(int fd) {
     int fl = fcntl(fd, F_GETFL, 0);
     if (fl < 0) die("fcntl(F_GETFL)");
+    if (fcntl(fd, F_SETFL, fl | O_NONBLOCK) < 0)
+        die("fcntl(F_SETFL O_NONBLOCK)");
+}
 
-    if (fcntl(fd, F_SETFL, fl | O_NONBLOCK | O_ASYNC) < 0)
-        die("fcntl(F_SETFL O_NONBLOCK|O_ASYNC)");
-
-    /* кто будет получать SIGIO */
-    if (fcntl(fd, F_SETOWN, getpid()) < 0)
-        die("fcntl(F_SETOWN)");
+/* Включаем генерацию SIGPOLL на события ввода/ошибки/разрыва */
+static void enable_sigpoll(int fd) {
+    int events = S_INPUT | S_HIPRI | S_ERROR | S_HANGUP;
+    if (ioctl(fd, I_SETSIG, events) < 0)
+        die("ioctl(I_SETSIG)");
 }
 
 int main(void) {
     int sfd;
     struct sockaddr_un addr;
 
-    /* таблица клиентов по fd (как в варианте с select) */
     int clients[FD_SETSIZE];
-    for (int i = 0; i < FD_SETSIZE; i++) clients[i] = 0;
+    int i;
 
-    /* обработчик SIGIO */
-    signal(SIGIO, on_sigio);
+    for (i = 0; i < FD_SETSIZE; i++) clients[i] = 0;
+
+    signal(SIGPOLL, on_sigpoll);
 
     sfd = socket(AF_UNIX, SOCK_STREAM, 0);
     if (sfd < 0) die("socket");
@@ -62,15 +66,13 @@ int main(void) {
     if (bind(sfd, (struct sockaddr *)&addr, sizeof(addr)) < 0) die("bind");
     if (listen(sfd, 20) < 0) die("listen");
 
-    /* включаем async-сигналы на слушающем сокете */
-    set_nonblock_async(sfd);
+    set_nonblock(sfd);
+    enable_sigpoll(sfd);
 
     while (1) {
-        /* ждём любого сигнала (в т.ч. SIGIO) */
-        pause();
-
-        if (!got_sigio) continue;
-        got_sigio = 0;
+        pause();                 /* ждём SIGPOLL */
+        if (!got_sig) continue;
+        got_sig = 0;
 
         /* 1) принять всех новых клиентов */
         while (1) {
@@ -86,50 +88,43 @@ int main(void) {
             }
 
             clients[cfd] = 1;
-
-            /* включаем async на клиентском сокете тоже */
-            set_nonblock_async(cfd);
+            set_nonblock(cfd);
+            enable_sigpoll(cfd);
         }
 
-        /* 2) вычитать данные со всех клиентов (если есть) */
-        for (int fd = 0; fd < FD_SETSIZE; fd++) {
-            if (!clients[fd]) continue;
+        /* 2) читать данные со всех клиентов */
+        for (i = 0; i < FD_SETSIZE; i++) {
+            if (!clients[i]) continue;
 
             while (1) {
                 char buf[BUF_SIZE];
-                int n = (int)read(fd, buf, BUF_SIZE);
+                int n = (int)read(i, buf, BUF_SIZE);
 
                 if (n > 0) {
-                    for (int k = 0; k < n; k++)
+                    int k;
+                    for (k = 0; k < n; k++)
                         buf[k] = (char)toupper((unsigned char)buf[k]);
-
-                    /* печать на stdout */
                     write(1, buf, n);
                     continue;
                 }
 
                 if (n == 0) {
-                    /* клиент закрыл соединение */
-                    close(fd);
-                    clients[fd] = 0;
+                    close(i);
+                    clients[i] = 0;
                     break;
                 }
 
-                /* n < 0 */
-                if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                    /* сейчас данных нет */
+                if (errno == EAGAIN || errno == EWOULDBLOCK)
                     break;
-                }
 
-                /* другая ошибка */
-                close(fd);
-                clients[fd] = 0;
+                close(i);
+                clients[i] = 0;
                 break;
             }
         }
     }
 
-    /* по-хорошему (сюда не дойдём): */
+    /* не дойдём */
     close(sfd);
     unlink(SOCK_PATH);
     return 0;
