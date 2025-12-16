@@ -48,7 +48,7 @@ int main(void)
             close(client_fd);
             exit(EXIT_FAILURE);
         }
-        sleep(1);
+        
     }
 
     close(client_fd);

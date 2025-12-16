@@ -6,64 +6,51 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/un.h>
-#include <sys/types.h>
 
 #define SOCKET_PATH "/tmp/uds_echo.sock"
-#define BUFFER_SIZE 4096
+#define BUF_SIZE 4096
 
-int main(void) {
-    int sock_fd;
-    struct sockaddr_un addr;
-    char sendbuf[BUFFER_SIZE];
-
-    // 1. Сокет
-    sock_fd = socket(AF_UNIX, SOCK_STREAM, 0);
-    if (sock_fd == -1) {
-        perror("socket");
-        exit(EXIT_FAILURE);
+int main(int argc, char **argv) {
+    int num = 1;
+    if (argc >= 2) {
+        num = atoi(argv[1]);
+        if (num <= 0) num = 1;
     }
 
-    // 2. Адрес сервера
+    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (fd == -1) {
+        perror("socket");
+        return 1;
+    }
+
+    struct sockaddr_un addr;
     memset(&addr, 0, sizeof(addr));
     addr.sun_family = AF_UNIX;
     strncpy(addr.sun_path, SOCKET_PATH, sizeof(addr.sun_path) - 1);
 
-    // 3. connect
-    if (connect(sock_fd, (struct sockaddr*)&addr, sizeof(addr)) == -1) {
+    if (connect(fd, (struct sockaddr*)&addr, sizeof(addr)) == -1) {
         perror("connect");
-        close(sock_fd);
-        exit(EXIT_FAILURE);
+        close(fd);
+        return 1;
     }
 
-    // 4. Уникальный идентификатор клиента: K<pid>
-    char id[16];
-    snprintf(id, sizeof(id), "K%d", (int)getpid());
-
-    // 5. Сообщения 
-    const char *messages[] = {
-        "HELLO, SERVER!\n",
-        "THIS IS A TEST MESSAGE.\n",
-        "UNIX DOMAIN SOCKETS ARE COOL.\n",
-        "SENDING DATA FROM CLIENT.\n",
-        "GOODBYE!\n",
-        NULL
-    };
-
-    for (int i = 0; messages[i] != NULL; i++) {
-        // Собираем строку вида: "K123 HELLO, SERVER!\n"
-        int len = snprintf(sendbuf, sizeof(sendbuf), "%s %s", id, messages[i]);
-        if (len < 0 || len >= (int)sizeof(sendbuf)) {
-            fprintf(stderr, "message too long\n");
-            break;
-        }
-
-        if (write(sock_fd, sendbuf, len) == -1) {
-            perror("write");
-            break;
-        }
-
+    char msg[BUF_SIZE];
+    int len = snprintf(msg, sizeof(msg),
+                       "Hello server %d (pid=%d)\n",
+                       num, (int)getpid());
+    if (len < 0 || len >= (int)sizeof(msg)) {
+        fprintf(stderr, "snprintf overflow\n");
+        close(fd);
+        return 1;
     }
 
-    close(sock_fd);
+    // отправляем одну строку
+    if (write(fd, msg, (size_t)len) == -1) {
+        perror("write");
+        close(fd);
+        return 1;
+    }
+
+    close(fd);
     return 0;
 }

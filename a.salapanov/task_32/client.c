@@ -42,10 +42,6 @@ int main(void) {
     // 5. Сообщения 
     const char *messages[] = {
         "HELLO, SERVER!\n",
-        "THIS IS A TEST MESSAGE.\n",
-        "UNIX DOMAIN SOCKETS ARE COOL.\n",
-        "SENDING DATA FROM CLIENT.\n",
-        "GOODBYE!\n",
         NULL
     };
 
