@@ -40,9 +40,12 @@ static void set_nonblock(int fd) {
 /* Включаем генерацию SIGPOLL на события ввода/ошибки/разрыва */
 static void enable_sigpoll(int fd) {
     int events = S_INPUT | S_HIPRI | S_ERROR | S_HANGUP;
-    if (ioctl(fd, I_SETSIG, events) < 0)
-        die("ioctl(I_SETSIG)");
+    if (ioctl(fd, I_SETSIG, (char *)&events) < 0) {
+        perror("ioctl(I_SETSIG)");
+        exit(1);
+    }
 }
+
 
 int main(void) {
     int sfd;
