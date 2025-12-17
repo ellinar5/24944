@@ -3,11 +3,10 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 
+#include <stropts.h>
+#include <sys/ioctl.h>
 #include <aio.h>
 #include <fcntl.h>
-#ifndef O_ASYNC
-#define O_ASYNC FASYNC
-#endif
 #include <signal.h>
 #include <unistd.h>
 #include <errno.h>
@@ -166,10 +165,11 @@ int main(void) {
     /* обработчик SIGIO (новые подключения) */
     struct sigaction sa_io;
     memset(&sa_io, 0, sizeof(sa_io));
-    sa_io.sa_handler = on_sigio;
+    sa_io.sa_handler = on_sigio;   /* можно не переименовывать */
     sigemptyset(&sa_io.sa_mask);
     sa_io.sa_flags = SA_RESTART;
-    if (sigaction(SIGIO, &sa_io, NULL) == -1) die("sigaction(SIGIO)");
+    if (sigaction(SIGPOLL, &sa_io, NULL) == -1) die("sigaction(SIGPOLL)");
+
 
     /* обработчик AIO completion (realtime signal) */
     struct sigaction sa_aio;
@@ -191,10 +191,17 @@ int main(void) {
     if (bind(listen_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) die("bind");
     if (listen(listen_fd, 16) < 0) die("listen");
 
-    /* включаем SIGIO на listen_fd */
-    (void)fcntl(listen_fd, F_SETOWN, getpid());
+    /* accept() сделаем неблокирующим */
     int lf = fcntl(listen_fd, F_GETFL, 0);
-    (void)fcntl(listen_fd, F_SETFL, lf | O_NONBLOCK | O_ASYNC);
+    (void)fcntl(listen_fd, F_SETFL, lf | O_NONBLOCK);
+
+    /* Просим SIGPOLL при входящих подключениях */
+    int sigmask = S_INPUT; 
+    if (ioctl(listen_fd, I_SETSIG, sigmask) == -1) {
+        perror("ioctl(I_SETSIG)");
+        exit(1);
+        }
+
 
     const char *msg = "AIO+signals server running. Socket: " SOCKET_PATH "\n";
     (void)write(STDOUT_FILENO, msg, strlen(msg));
