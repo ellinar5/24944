@@ -4,96 +4,145 @@
 #include <sys/select.h>
 
 #include <unistd.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include <errno.h>
+#include <signal.h>
+#include <stdio.h>   // perror
+#include <stddef.h>
 
-#define SOCK_PATH "/tmp/uds_upper.sock"
+#define SOCKET_PATH "/tmp/uppercase_socket"
 #define BUF_SIZE 1024
 
-static void die(const char *msg) {
-    perror(msg);
-    exit(1);
+static volatile sig_atomic_t stop_flag = 0;
+
+static void on_signal(int sig) {
+    (void)sig;
+    stop_flag = 1;
+}
+
+static void safe_write_str(int fd, const char *s) {
+    if (!s) return;
+    (void)write(fd, s, strlen(s));
 }
 
 int main(void) {
-    int sfd;
+    int server_fd = -1;
     struct sockaddr_un addr;
-    fd_set rfds;
-    int maxfd;
-    int i;
 
-    /* clients[fd] = 1 если fd клиента активен */
-    int clients[FD_SETSIZE];
-    for (i = 0; i < FD_SETSIZE; i++) clients[i] = 0;
+    /* массив клиентов: -1 = свободно */
+    int client_fds[FD_SETSIZE];
+    for (int i = 0; i < FD_SETSIZE; i++) client_fds[i] = -1;
 
-    sfd = socket(AF_UNIX, SOCK_STREAM, 0);
-    if (sfd < 0) die("socket");
+    signal(SIGINT, on_signal);
+    signal(SIGTERM, on_signal);
 
-    unlink(SOCK_PATH);
+    server_fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (server_fd < 0) { perror("socket"); return 1; }
 
     memset(&addr, 0, sizeof(addr));
     addr.sun_family = AF_UNIX;
-    strcpy(addr.sun_path, SOCK_PATH);
+    strncpy(addr.sun_path, SOCKET_PATH, sizeof(addr.sun_path) - 1);
 
-    if (bind(sfd, (struct sockaddr *)&addr, sizeof(addr)) < 0) die("bind");
-    if (listen(sfd, 20) < 0) die("listen");
+    unlink(SOCKET_PATH);
 
-    maxfd = sfd;
+    if (bind(server_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+        perror("bind");
+        close(server_fd);
+        return 1;
+    }
 
-    while (1) {
+    if (listen(server_fd, 16) < 0) {
+        perror("listen");
+        close(server_fd);
+        unlink(SOCKET_PATH);
+        return 1;
+    }
+
+    safe_write_str(STDOUT_FILENO, "Server started (select). Socket: " SOCKET_PATH "\n");
+
+    char buf[BUF_SIZE];
+
+    while (!stop_flag) {
+        fd_set rfds;
         FD_ZERO(&rfds);
-        FD_SET(sfd, &rfds);
 
-        for (i = 0; i <= maxfd; i++) {
-            if (clients[i]) FD_SET(i, &rfds);
+        int maxfd = server_fd;
+        FD_SET(server_fd, &rfds);
+
+        for (int i = 0; i < FD_SETSIZE; i++) {
+            int fd = client_fds[i];
+            if (fd >= 0) {
+                FD_SET(fd, &rfds);
+                if (fd > maxfd) maxfd = fd;
+            }
         }
 
-        if (select(maxfd + 1, &rfds, NULL, NULL, NULL) < 0) {
-            die("select");
+        int r = select(maxfd + 1, &rfds, NULL, NULL, NULL);  // блокирующий
+        if (r < 0) {
+            if (errno == EINTR) continue; // сигнал — просто пересоберём set
+            perror("select");
+            break;
         }
 
-        /* Новый клиент? */
-        if (FD_ISSET(sfd, &rfds)) {
-            int cfd = accept(sfd, NULL, NULL);
-            if (cfd >= 0) {
-                if (cfd < FD_SETSIZE) {
-                    clients[cfd] = 1;
-                    if (cfd > maxfd) maxfd = cfd;
-                } else {
-                    /* слишком большой fd для select */
+        /* Новые подключения */
+        if (FD_ISSET(server_fd, &rfds)) {
+            int cfd = accept(server_fd, NULL, NULL);
+            if (cfd < 0) {
+                if (errno != EINTR) perror("accept");
+            } else {
+                int placed = 0;
+                for (int i = 0; i < FD_SETSIZE; i++) {
+                    if (client_fds[i] < 0) {
+                        client_fds[i] = cfd;
+                        placed = 1;
+                        break;
+                    }
+                }
+                if (!placed) {
+                    safe_write_str(STDERR_FILENO, "Too many clients; closing connection\n");
                     close(cfd);
                 }
             }
         }
 
-        /* Данные от клиентов */
-        for (i = 0; i <= maxfd; i++) {
-            if (clients[i] && FD_ISSET(i, &rfds)) {
-                char buf[BUF_SIZE];
-                int n = (int)read(i, buf, BUF_SIZE);
+        /* Чтение от клиентов */
+        for (int i = 0; i < FD_SETSIZE; i++) {
+            int fd = client_fds[i];
+            if (fd < 0) continue;
+            if (!FD_ISSET(fd, &rfds)) continue;
 
-                if (n <= 0) {
-                    /* клиент закрылся */
-                    close(i);
-                    clients[i] = 0;
-                    continue;
+            ssize_t n = read(fd, buf, sizeof(buf));
+            if (n > 0) {
+                for (ssize_t j = 0; j < n; j++) {
+                    buf[j] = (char)toupper((unsigned char)buf[j]);
                 }
-
-                /* в верхний регистр */
-                for (int k = 0; k < n; k++) {
-                    buf[k] = (char)toupper((unsigned char)buf[k]);
+                /* Пишем ровно n байт */
+                ssize_t off = 0;
+                while (off < n) {
+                    ssize_t w = write(STDOUT_FILENO, buf + off, (size_t)(n - off));
+                    if (w < 0) {
+                        if (errno == EINTR) continue;
+                        perror("write(stdout)");
+                        break;
+                    }
+                    off += w;
                 }
-
-                /* печать на stdout */
-                write(1, buf, n);
+            } else {
+                /* n == 0 -> клиент закрылся; n < 0 -> ошибка */
+                close(fd);
+                client_fds[i] = -1;
             }
         }
     }
 
-    /* сюда не дойдём, но по-хорошему: */
-    close(sfd);
-    unlink(SOCK_PATH);
+    safe_write_str(STDOUT_FILENO, "\nServer stopping...\n");
+
+    for (int i = 0; i < FD_SETSIZE; i++) {
+        if (client_fds[i] >= 0) close(client_fds[i]);
+    }
+    close(server_fd);
+    unlink(SOCKET_PATH);
     return 0;
 }
