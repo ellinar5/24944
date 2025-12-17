@@ -5,195 +5,194 @@
 #include <string.h>
 #include <ctype.h>
 
-// РЈРїСЂР°РІР»СЏСЋС‰РёРµ СЃРёРјРІРѕР»С‹
-#define ERASE_CHAR 127    // Backspace
-#define LINE_KILL 21      // Ctrl+U - СѓРґР°Р»РµРЅРёРµ РІСЃРµР№ СЃС‚СЂРѕРєРё
-#define WORD_ERASE 23     // Ctrl+W - СѓРґР°Р»РµРЅРёРµ СЃР»РѕРІР°
-#define EXIT_PROGRAM 4    // Ctrl+D - РІС‹С…РѕРґ РёР· РїСЂРѕРіСЂР°РјРјС‹
-#define BEEP_SIGNAL 7     // Ctrl+G - Р·РІСѓРєРѕРІРѕР№ СЃРёРіРЅР°Р»
-#define MAX_INPUT_WIDTH 40 // РњР°РєСЃРёРјР°Р»СЊРЅР°СЏ РґР»РёРЅР° СЃС‚СЂРѕРєРё
+#define BACKSCAPE 127
+#define CTRL_U 21
+#define CTRL_W 23
+#define CTRL_D 4
+#define CTRL_G 7         // звуковой сигнал
+#define MAX_LINE_LEN 40  // максимальная длина строки
 
-// РћС‚РєР»СЋС‡РµРЅРёРµ СЃС‚Р°РЅРґР°СЂС‚РЅРѕРіРѕ СЂРµР¶РёРјР° С‚РµСЂРјРёРЅР°Р»Р°
-void setup_raw_terminal(struct termios *original_settings) {
-    struct termios new_settings;
-    // РџРѕР»СѓС‡Р°РµРј С‚РµРєСѓС‰РёРµ РЅР°СЃС‚СЂРѕР№РєРё С‚РµСЂРјРёРЅР°Р»Р°
-    tcgetattr(STDIN_FILENO, original_settings);
-    new_settings = *original_settings;
-    
-    new_settings.c_lflag &= ~(ICANON | ECHO);
-    new_settings.c_cc[VMIN] = 1;
-    new_settings.c_cc[VTIME] = 0;
-    
-    // РџСЂРёРјРµРЅСЏРµРј РЅРѕРІС‹Рµ РЅР°СЃС‚СЂРѕР№РєРё
-    tcsetattr(STDIN_FILENO, TCSANOW, &new_settings);
+void disable_echo_and_canonical(struct termios *old_tio)
+{
+    struct termios new_tio;
+    tcgetattr(STDIN_FILENO, old_tio);
+    new_tio = *old_tio;
+    new_tio.c_lflag &= ~ICANON;
+    new_tio.c_lflag &= ~ECHO;
+    new_tio.c_cc[VMIN] = 1;
+    new_tio.c_cc[VTIME] = 0;
+    tcsetattr(STDIN_FILENO, TCSANOW, &new_tio);
 }
 
-// РћР±РЅРѕРІР»РµРЅРёРµ С‚РµРєСѓС‰РµР№ СЃС‚СЂРѕРєРё СЃ РїРѕР·РёС†РёРѕРЅРёСЂРѕРІР°РЅРёРµРј РєСѓСЂСЃРѕСЂР°
-void refresh_display(const char *input_line, int cursor_position) {
+// перерисовка строки с учетом позиции курсора
+void redraw_line(const char *line, int pos)
+{
     write(STDOUT_FILENO, "\r\033[K", 4);
-    write(STDOUT_FILENO, input_line, strlen(input_line));
+    write(STDOUT_FILENO, line, strlen(line));
     
-    // Р’РѕР·РІСЂР°С‚ РєСѓСЂСЃРѕСЂР° РЅР° РЅСѓР¶РЅСѓСЋ РїРѕР·РёС†РёСЋ
-    int backward_steps = strlen(input_line) - cursor_position;
-    if (backward_steps > 0) {
-        char cursor_command[16];
-        snprintf(cursor_command, sizeof(cursor_command), "\033[%dD", backward_steps);
-        write(STDOUT_FILENO, cursor_command, strlen(cursor_command));
+    // возврат курсора на позицию
+    int move_back = strlen(line) - pos;
+    if (move_back > 0)
+    {
+        char move_seq[16];
+        snprintf(move_seq, sizeof(move_seq), "\033[%dD", move_back);
+        write(STDOUT_FILENO, move_seq, strlen(move_seq));
     }
 }
 
-// РЈРґР°Р»РµРЅРёРµ РїРѕСЃР»РµРґРЅРµРіРѕ СЃР»РѕРІР° РІ СЃС‚СЂРѕРєРµ
-void remove_previous_word(char *text, int *current_position, int *column_position) {
-    if (*current_position == 0) return;
-    int search_index = *current_position - 1;
-    
-    // РџСЂРѕРїСѓСЃРєР°РµРј РїСЂРѕР±РµР»С‹ РїРµСЂРµРґ СЃР»РѕРІРѕРј Рё РЅР°С…РѕРґРёРј РЅР°С‡Р°Р»Рѕ
-    while (search_index >= 0 && text[search_index] == ' ') {
-        search_index--;
-    }
-    while (search_index >= 0 && text[search_index] != ' ') {
-        search_index--;
-    }
-    search_index++;
-    
-    int deletion_count = *current_position - search_index;  // РљРѕР»РёС‡РµСЃС‚РІРѕ СѓРґР°Р»СЏРµРјС‹С… СЃРёРјРІРѕР»РѕРІ
-    
-    // РЈРґР°Р»СЏРµРј СЃР»РѕРІРѕ
-    memmove(&text[search_index], &text[*current_position], 
-            strlen(text) - *current_position + 1);
-    
-    *current_position = search_index;
-    *column_position = search_index;
-    refresh_display(text, *current_position);
-}
+int main()
+{
+    struct termios old_tio;
+    disable_echo_and_canonical(&old_tio);
 
-// РћР±СЂР°Р±РѕС‚РєР° РїРµСЂРµРЅРѕСЃР° СЃР»РѕРІР° РїСЂРё РґРѕСЃС‚РёР¶РµРЅРёРё РіСЂР°РЅРёС†С‹
-void handle_word_wrap(char *text, int *current_pos, int *col_pos) {
-    int text_length = strlen(text);
-    if (*col_pos < MAX_INPUT_WIDTH) return;
-    
-    // РС‰РµРј РЅР°С‡Р°Р»Рѕ С‚РµРєСѓС‰РµРіРѕ СЃР»РѕРІР° РґР»СЏ РїРµСЂРµРЅРѕСЃР°
-    int word_begin = *current_pos - 1;
-    while (word_begin > 0 && text[word_begin] != ' ') {
-        word_begin--;
-    }
-    
-    if (text[word_begin] == ' ') {
-        word_begin++;
-    }
-    
-    // Р•СЃР»Рё СЃР»РѕРІРѕ СЃР»РёС€РєРѕРј РґР»РёРЅРЅРѕРµ Рё РЅРµ РїРѕРјРµС‰Р°РµС‚СЃСЏ
-    if (word_begin == 0 && *current_pos >= MAX_INPUT_WIDTH) {
-        char beep_char = BEEP_SIGNAL;  // РЎРѕР·РґР°РµРј РїРµСЂРµРјРµРЅРЅСѓСЋ РґР»СЏ Р·РІСѓРєРѕРІРѕРіРѕ СЃРёРіРЅР°Р»Р°
-        write(STDOUT_FILENO, &beep_char, 1);
-        memmove(&text[*current_pos - 1], &text[*current_pos], 
-                text_length - *current_pos + 1);
-        (*current_pos)--;
-        (*col_pos)--;
-        return;
-    }
-    
-    int word_length = *current_pos - word_begin;
-    char wrapped_word[MAX_INPUT_WIDTH] = {0};
-    strncpy(wrapped_word, &text[word_begin], word_length);
-    text[word_begin] = '\0';
-    
-    *current_pos = word_begin;
-    *col_pos = word_begin;
-    refresh_display(text, *current_pos);
-    
-    write(STDOUT_FILENO, "\n", 1);
-    write(STDOUT_FILENO, wrapped_word, word_length);
-    
-    strcpy(text, wrapped_word);
-    *current_pos = word_length;
-    *col_pos = word_length;
-}
+    char line[MAX_LINE_LEN + 1] = {0};
+    int pos = 0;
+    int column = 0;
+    char beep = CTRL_G;
 
-int main() {
-    struct termios original_terminal;
-    setup_raw_terminal(&original_terminal);
-
-    char input_buffer[MAX_INPUT_WIDTH + 1] = {0};
-    int cursor_pos = 0;
-    int screen_column = 0;
-    char beep_char = BEEP_SIGNAL;  // РџРµСЂРµРјРµРЅРЅР°СЏ РґР»СЏ Р·РІСѓРєРѕРІРѕРіРѕ СЃРёРіРЅР°Р»Р°
-
-    printf("Р’РІРµРґРёС‚Рµ С‚РµРєСЃС‚: ");
+    printf("Введите текст: ");
     fflush(stdout);
 
-    while (1) {
-        char input_char;
-        read(STDIN_FILENO, &input_char, 1);
+    while (1)
+    {
+        char c;
+        read(STDIN_FILENO, &c, 1);
 
-        // Р’С‹С…РѕРґ (Ctrl+D)
-        if (input_char == EXIT_PROGRAM) { 
-            if (cursor_pos == 0 && screen_column == 0) {
-                break; 
+        if (c == CTRL_D)
+        { 
+            if (pos == 0 && column == 0) { break; } 
+        }
+        else if (c == BACKSCAPE)
+        { 
+            if (pos > 0)
+            {
+                memmove(&line[pos - 1], &line[pos], strlen(line) - pos + 1);
+                pos--;
+                column--;
+                redraw_line(line, pos);
             }
+            else { write(STDOUT_FILENO, &beep, 1); } 
         }
-        // Backspace
-        else if (input_char == ERASE_CHAR) { 
-            if (cursor_pos > 0) {
-                memmove(&input_buffer[cursor_pos - 1], &input_buffer[cursor_pos], 
-                        strlen(input_buffer) - cursor_pos + 1);
-                cursor_pos--;
-                screen_column--;
-                refresh_display(input_buffer, cursor_pos);
-            } else {
-                write(STDOUT_FILENO, &beep_char, 1); // РЎРёРіРЅР°Р» РїСЂРё РЅРµРІРѕР·РјРѕР¶РЅРѕСЃС‚Рё СѓРґР°Р»РµРЅРёСЏ
+        else if (c == CTRL_U)
+        { 
+            if (pos > 0)
+            {
+                memset(line, 0, MAX_LINE_LEN + 1);
+                column = 0;
+                pos = 0;
+                redraw_line(line, pos);
             }
+            else { write(STDOUT_FILENO, &beep, 1); }
         }
-        // РЈРґР°Р»РµРЅРёРµ РІСЃРµР№ СЃС‚СЂРѕРєРё (Ctrl+U)
-        else if (input_char == LINE_KILL) { 
-            if (cursor_pos > 0) {
-                memset(input_buffer, 0, MAX_INPUT_WIDTH + 1);
-                screen_column = 0;
-                cursor_pos = 0;
-                refresh_display(input_buffer, cursor_pos);
-            } else {
-                write(STDOUT_FILENO, &beep_char, 1);
-            }
+        else if (c == CTRL_W)
+        { 
+            if (pos == 0) { continue; }
+    
+            int search_position = pos - 1;
+            
+            // Удаляем пробелы в конце
+            while (search_position >= 0 && line[search_position] == ' ') { search_position--; }
+            
+            // Удаляем последнее слово
+            while (search_position >= 0 && line[search_position] != ' ') { search_position--; }
+            
+            search_position++; // переходим к первому символу слова
+            
+            // Вычисляем сколько символов нужно удалить
+            int chars_to_delete = pos - search_position;
+            
+            // Сдвигаем оставшуюся часть строки и обнуляем хвост
+            memmove(&line[search_position], &line[pos], strlen(line) - pos + 1);
+            
+            // Очищаем освободившуюся память в конце строки
+            memset(&line[strlen(line)], 0, chars_to_delete);
+            
+            pos = search_position;
+            column = search_position;
+            
+            redraw_line(line, pos); 
         }
-        // РЈРґР°Р»РµРЅРёРµ СЃР»РѕРІР° (Ctrl+W)
-        else if (input_char == WORD_ERASE) { 
-            if (cursor_pos == 0) continue;
-            remove_previous_word(input_buffer, &cursor_pos, &screen_column);
-        }
-        // РџРµС‡Р°С‚Р°РµРјС‹Рµ СЃРёРјРІРѕР»С‹
-        else if (input_char >= 32 && input_char <= 126) {
-            if (strlen(input_buffer) < MAX_INPUT_WIDTH) {
-                if (cursor_pos < strlen(input_buffer)) { 
-                    memmove(&input_buffer[cursor_pos + 1], &input_buffer[cursor_pos], 
-                            strlen(input_buffer) - cursor_pos + 1); 
+        else if (c >= 32 && c <= 126) // печатаемые символы
+        {
+            if (strlen(line) < MAX_LINE_LEN)
+            {
+                // вставка символа в текущую позицию
+                if (pos < strlen(line)) { 
+                    memmove(&line[pos + 1], &line[pos], strlen(line) - pos + 1); 
                 }
-                input_buffer[cursor_pos] = input_char;
-                cursor_pos++;
-                screen_column++;
-                if (screen_column >= MAX_INPUT_WIDTH) {
-                    handle_word_wrap(input_buffer, &cursor_pos, &screen_column);
-                } else {
-                    refresh_display(input_buffer, cursor_pos);
+                line[pos] = c;
+                pos++;
+                column++;
+
+                // Проверка на необходимость переноса
+                if (column >= MAX_LINE_LEN) 
+                {
+                    int word_start = pos - 1;
+                    
+                    // Ищем начало текущего слова (ищем пробел перед словом)
+                    while (word_start > 0 && line[word_start] != ' ') {
+                        word_start--;
+                    }
+                    
+                    // Если нашли пробел, то word_start указывает на пробел
+                    // Начало слова - следующая позиция после пробела
+                    if (line[word_start] == ' ') {
+                        word_start++;
+                    }
+                    
+                    // Если слово начинается с начала строки и слишком длинное
+                    if (word_start == 0 && pos >= MAX_LINE_LEN) 
+                    {
+                        write(STDOUT_FILENO, &beep, 1);
+                        // Откатываем последний символ
+                        memmove(&line[pos - 1], &line[pos], strlen(line) - pos + 1);
+                        pos--;
+                        column--;
+                        continue;
+                    }
+
+                    // Выделяем слово для переноса
+                    char word_to_wrap[MAX_LINE_LEN] = {0};
+                    int word_len = pos - word_start;
+                    strncpy(word_to_wrap, &line[word_start], word_len);
+                    
+                    // Обрезаем текущую строку ДО начала переносимого слова
+                    line[word_start] = '\0';
+                    
+                    // Перерисовываем текущую строку (без перенесенного слова)
+                    pos = word_start;
+                    column = word_start;
+                    redraw_line(line, pos);
+
+                    memset(line, 0, sizeof(line));
+                    
+                    // Переходим на новую строку и выводим перенесенное слово
+                    write(STDOUT_FILENO, "\n", 1);
+                    write(STDOUT_FILENO, word_to_wrap, word_len);
+                    
+                    // Копируем перенесенное слово как новую текущую строку
+                    strcpy(line, word_to_wrap);
+                    pos = word_len;
+                    column = word_len;
                 }
-            } else {
-                write(STDOUT_FILENO, &beep_char, 1);
+                else { redraw_line(line, pos); }
             }
+            else { write(STDOUT_FILENO, &beep, 1); }
         }
-        // Enter
-        else if (input_char == '\n' || input_char == '\r') {
+        else if (c == '\n' || c == '\r') // новая строка
+        {
             write(STDOUT_FILENO, "\n", 1);
-            memset(input_buffer, 0, sizeof(input_buffer));
-            cursor_pos = 0;
-            screen_column = 0;
+            // printf("Вы ввели: %s\n", line);
+            // printf("Введите текст: ");
+            fflush(stdout);
+            memset(line, 0, sizeof(line));
+            pos = 0;
+            column = 0;
         }
-        // РќРµРґРѕРїСѓСЃС‚РёРјС‹Рµ СЃРёРјРІРѕР»С‹
-        else {
-            write(STDOUT_FILENO, &beep_char, 1);
-        }
+        else { write(STDOUT_FILENO, &beep, 1); }
     }
 
-    // Р’РѕСЃСЃС‚Р°РЅРѕРІР»РµРЅРёРµ РѕСЂРёРіРёРЅР°Р»СЊРЅС‹С… РЅР°СЃС‚СЂРѕРµРє С‚РµСЂРјРёРЅР°Р»Р°
-    tcsetattr(STDIN_FILENO, TCSANOW, &original_terminal);
+    tcsetattr(STDIN_FILENO, TCSANOW, &old_tio);
     write(STDOUT_FILENO, "\n", 1);
     return 0;
 }
