@@ -1,7 +1,7 @@
 #!/bin/bash
 SERVER="./server"
 CLIENT="./client"
-SOCKET_PATH="/tmp/uppercase_socket"
+SOCKET_PATH="/tmp/uppercase_socket_nbezborodov"
 
 cleanup() {
   echo "Stopping..."

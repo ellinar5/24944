@@ -5,7 +5,7 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 
-#define SOCKET_PATH "/tmp/uppercase_socket"
+#define SOCKET_PATH "/tmp/uppercase_socket_nbezborodov"
 #define BUFFER_SIZE 1024
 
 int main(void)

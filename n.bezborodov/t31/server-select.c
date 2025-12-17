@@ -12,7 +12,7 @@
 #include <stdio.h>   // perror
 #include <stddef.h>
 
-#define SOCKET_PATH "/tmp/uppercase_socket"
+#define SOCKET_PATH "/tmp/uppercase_socket_nbezborodov"
 #define BUF_SIZE 1024
 
 static volatile sig_atomic_t stop_flag = 0;
