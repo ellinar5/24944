@@ -5,6 +5,9 @@
 
 #include <aio.h>
 #include <fcntl.h>
+#ifndef O_ASYNC
+#define O_ASYNC FASYNC
+#endif
 #include <signal.h>
 #include <unistd.h>
 #include <errno.h>
