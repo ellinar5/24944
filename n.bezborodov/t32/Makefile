@@ -1,24 +1,14 @@
-# Makefile (Solaris make)
+CC=gcc
+CFLAGS=-Wall -Wextra -O2
+LDLIBS=-lsocket -lnsl -lrt
 
-CC = cc
-CFLAGS = -O2
-LDFLAGS = -lsocket -lnsl
+all: server client
 
-SERVER_SRC = server_async.c
-CLIENT_SRC = client_auto.c
+server: server_async.c
+	$(CC) $(CFLAGS) $< -o $@ $(LDLIBS)
 
-SERVER = server
-CLIENT = client
-
-.PHONY: all clean
-
-all: $(SERVER) $(CLIENT)
-
-$(SERVER): $(SERVER_SRC)
-	$(CC) $(CFLAGS) -o $@ $(SERVER_SRC) $(LDFLAGS)
-
-$(CLIENT): $(CLIENT_SRC)
-	$(CC) $(CFLAGS) -o $@ $(CLIENT_SRC) $(LDFLAGS)
+client: client_auto.c
+	$(CC) $(CFLAGS) $< -o $@ $(LDLIBS)
 
 clean:
-	rm -f $(SERVER) $(CLIENT) *.o
+	rm -f server client /tmp/uppercase_socket_nbezborodov *.o
