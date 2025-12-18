@@ -1,29 +1,40 @@
-/* server_async.c — Solaris / UNIX domain socket server with SIGPOLL/SIGIO async I/O */
-
+#define _POSIX_C_SOURCE 200112L
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 
-#include <sys/select.h>   /* FD_SETSIZE */
-#include <sys/filio.h>    /* FIONBIO, FIOASYNC */
-#include <sys/sockio.h>   /* SIOCSPGRP */
-
+#include <stropts.h>
+#include <sys/ioctl.h>
+#include <aio.h>
+#include <fcntl.h>
+#include <signal.h>
 #include <unistd.h>
+#include <errno.h>
+#include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
-#include <ctype.h>
-#include <errno.h>
-#include <signal.h>
 
-#define SOCK_PATH "/tmp/uds_upper.sock"
-#define BUF_SIZE  1024
+#define SOCKET_PATH "/tmp/uppercase_socket_nbezborodov"
+#define MAX_CLIENTS 64
+#define READ_SIZE 1
 
-static volatile sig_atomic_t got_sig = 0;
+/* событие в pipe: либо "accept needed", либо "aio done for slot" */
+#define EVT_ACCEPT  0xFFFFu
 
-static void on_async_signal(int signo) {
-    (void)signo;
-    got_sig = 1;
+struct client {
+    int fd;
+    int active;
+    struct aiocb cb;
+    unsigned char byte;
+};
+
+static struct client clients[MAX_CLIENTS];
+static int listen_fd = -1;
+static int evt_pipe[2] = {-1, -1};
+
+static unsigned char to_upper_ascii(unsigned char c) {
+    if (c >= 'a' && c <= 'z') return (unsigned char)(c - ('a' - 'A'));
+    return c;
 }
 
 static void die(const char *msg) {
@@ -31,118 +42,187 @@ static void die(const char *msg) {
     exit(1);
 }
 
-/* Включить non-block + async уведомления для fd */
-static void enable_async(int fd) {
-    int on;
-    int pgrp;
-
-    on = 1;
-    if (ioctl(fd, FIONBIO, &on) < 0) die("ioctl(FIONBIO)");
-
-    on = 1;
-    if (ioctl(fd, FIOASYNC, &on) < 0) die("ioctl(FIOASYNC)");
-
-    /* куда слать SIGPOLL/SIGIO */
-    pgrp = (int)getpid();
-    if (ioctl(fd, SIOCSPGRP, &pgrp) < 0) die("ioctl(SIOCSPGRP)");
+/* signal handler: только write() в pipe (async-signal-safe) */
+static void push_event(unsigned short code) {
+    /* пишем 2 байта; если pipe переполнен — просто теряем событие */
+    (void)write(evt_pipe[1], &code, sizeof(code));
 }
 
-static void install_handlers(void) {
-    struct sigaction sa;
-    memset(&sa, 0, sizeof(sa));
-    sa.sa_handler = on_async_signal;
-    sa.sa_flags   = SA_RESTART;      /* чтобы read/accept нормально переживали сигнал */
-    sigemptyset(&sa.sa_mask);
+static void on_sigio(int sig) {
+    (void)sig;
+    push_event(EVT_ACCEPT);
+}
 
-    /* На Solaris часто прилетает SIGPOLL, а не SIGIO */
-    if (sigaction(SIGPOLL, &sa, NULL) < 0) die("sigaction(SIGPOLL)");
-    if (sigaction(SIGIO,   &sa, NULL) < 0) die("sigaction(SIGIO)");
+static void on_aio_done(int sig, siginfo_t *si, void *uap) {
+    (void)sig; (void)uap;
+    int slot = si->si_value.sival_int;
+    if (slot >= 0 && slot < MAX_CLIENTS) {
+        push_event((unsigned short)slot);
+    }
+}
+
+static void cleanup(int sig) {
+    (void)sig;
+    if (listen_fd != -1) close(listen_fd);
+    for (int i = 0; i < MAX_CLIENTS; i++) {
+        if (clients[i].active) {
+            aio_cancel(clients[i].fd, NULL);
+            close(clients[i].fd);
+            clients[i].active = 0;
+            clients[i].fd = -1;
+        }
+    }
+    if (evt_pipe[0] != -1) close(evt_pipe[0]);
+    if (evt_pipe[1] != -1) close(evt_pipe[1]);
+    unlink(SOCKET_PATH);
+    _exit(0);
+}
+
+static void arm_aio_read(int slot) {
+    memset(&clients[slot].cb, 0, sizeof(clients[slot].cb));
+    clients[slot].cb.aio_fildes = clients[slot].fd;
+    clients[slot].cb.aio_buf    = &clients[slot].byte;
+    clients[slot].cb.aio_nbytes = READ_SIZE;
+
+    clients[slot].cb.aio_sigevent.sigev_notify = SIGEV_SIGNAL;
+    clients[slot].cb.aio_sigevent.sigev_signo  = SIGRTMIN;
+    clients[slot].cb.aio_sigevent.sigev_value.sival_int = slot;
+
+    if (aio_read(&clients[slot].cb) == -1) {
+        /* клиент мог уже закрыться */
+        close(clients[slot].fd);
+        clients[slot].fd = -1;
+        clients[slot].active = 0;
+    }
+}
+
+static void accept_all_pending(void) {
+    for (;;) {
+        int cfd = accept(listen_fd, NULL, NULL);
+        if (cfd < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) return;
+            if (errno == EINTR) continue;
+            perror("accept");
+            return;
+        }
+
+        int slot = -1;
+        for (int i = 0; i < MAX_CLIENTS; i++) {
+            if (!clients[i].active) { slot = i; break; }
+        }
+
+        if (slot < 0) {
+            close(cfd);
+            continue;
+        }
+
+        clients[slot].fd = cfd;
+        clients[slot].active = 1;
+
+        /* стартуем первый aio_read на 1 байт */
+        arm_aio_read(slot);
+    }
+}
+
+static void handle_aio_slot(int slot) {
+    if (slot < 0 || slot >= MAX_CLIENTS) return;
+    if (!clients[slot].active) return;
+
+    int err = aio_error(&clients[slot].cb);
+    if (err == EINPROGRESS) return;
+
+    ssize_t n = aio_return(&clients[slot].cb);
+
+    if (n == 1) {
+        unsigned char out = to_upper_ascii(clients[slot].byte);
+        (void)write(STDOUT_FILENO, &out, 1);
+        arm_aio_read(slot);
+    } else {
+        /* n == 0 => EOF; n < 0 => ошибка */
+        close(clients[slot].fd);
+        clients[slot].fd = -1;
+        clients[slot].active = 0;
+    }
 }
 
 int main(void) {
-    int sfd;
     struct sockaddr_un addr;
-    int clients[FD_SETSIZE];
-    int i;
 
-    for (i = 0; i < FD_SETSIZE; i++) clients[i] = 0;
+    for (int i = 0; i < MAX_CLIENTS; i++) {
+        clients[i].fd = -1;
+        clients[i].active = 0;
+    }
 
-    install_handlers();
+    if (pipe(evt_pipe) == -1) die("pipe");
 
-    sfd = socket(AF_UNIX, SOCK_STREAM, 0);
-    if (sfd < 0) die("socket");
+    /* pipe лучше сделать неблокирующим, чтобы handler не завис */
+    int flags = fcntl(evt_pipe[1], F_GETFL, 0);
+    (void)fcntl(evt_pipe[1], F_SETFL, flags | O_NONBLOCK);
 
-    unlink(SOCK_PATH);
+    signal(SIGINT, cleanup);
+    signal(SIGTERM, cleanup);
+
+    /* обработчик SIGIO (новые подключения) */
+    struct sigaction sa_io;
+    memset(&sa_io, 0, sizeof(sa_io));
+    sa_io.sa_handler = on_sigio;   /* можно не переименовывать */
+    sigemptyset(&sa_io.sa_mask);
+    sa_io.sa_flags = SA_RESTART;
+    if (sigaction(SIGPOLL, &sa_io, NULL) == -1) die("sigaction(SIGPOLL)");
+
+
+    /* обработчик AIO completion (realtime signal) */
+    struct sigaction sa_aio;
+    memset(&sa_aio, 0, sizeof(sa_aio));
+    sa_aio.sa_sigaction = on_aio_done;
+    sigemptyset(&sa_aio.sa_mask);
+    sa_aio.sa_flags = SA_SIGINFO | SA_RESTART;
+    if (sigaction(SIGRTMIN, &sa_aio, NULL) == -1) die("sigaction(SIGRTMIN)");
+
+    listen_fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (listen_fd < 0) die("socket");
 
     memset(&addr, 0, sizeof(addr));
     addr.sun_family = AF_UNIX;
-    strncpy(addr.sun_path, SOCK_PATH, sizeof(addr.sun_path) - 1);
+    strncpy(addr.sun_path, SOCKET_PATH, sizeof(addr.sun_path) - 1);
 
-    if (bind(sfd, (struct sockaddr *)&addr, sizeof(addr)) < 0) die("bind");
-    if (listen(sfd, 20) < 0) die("listen");
+    unlink(SOCKET_PATH);
 
-    enable_async(sfd);
+    if (bind(listen_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) die("bind");
+    if (listen(listen_fd, 16) < 0) die("listen");
 
-    while (1) {
-        /* ждём любой из сигналов async I/O */
-        pause();
+    /* accept() сделаем неблокирующим */
+    int lf = fcntl(listen_fd, F_GETFL, 0);
+    (void)fcntl(listen_fd, F_SETFL, lf | O_NONBLOCK);
 
-        if (!got_sig) continue;
-        got_sig = 0;
-
-        /* 1) принять всех новых клиентов */
-        while (1) {
-            int cfd = accept(sfd, NULL, NULL);
-            if (cfd < 0) {
-                if (errno == EINTR) continue;
-                if (errno == EAGAIN || errno == EWOULDBLOCK) break;
-                die("accept");
-            }
-
-            if (cfd < FD_SETSIZE) {
-                clients[cfd] = 1;
-                enable_async(cfd);
-            } else {
-                close(cfd);
-            }
+    /* Просим SIGPOLL при входящих подключениях */
+    int sigmask = S_INPUT; 
+    if (ioctl(listen_fd, I_SETSIG, sigmask) == -1) {
+        perror("ioctl(I_SETSIG)");
+        exit(1);
         }
 
-        /* 2) читать данные от всех клиентов */
-        for (i = 0; i < FD_SETSIZE; i++) {
-            if (!clients[i]) continue;
 
-            while (1) {
-                char buf[BUF_SIZE];
-                ssize_t n = read(i, buf, sizeof(buf));
+    const char *msg = "AIO+signals server running. Socket: " SOCKET_PATH "\n";
+    (void)write(STDOUT_FILENO, msg, strlen(msg));
 
-                if (n > 0) {
-                    ssize_t k;
-                    for (k = 0; k < n; k++)
-                        buf[k] = (char)toupper((unsigned char)buf[k]);
+    /* на случай если кто-то уже коннектится сразу */
+    accept_all_pending();
 
-                    /* пишем на stdout (можно обратно клиенту — по заданию как надо) */
-                    (void)write(STDOUT_FILENO, buf, (size_t)n);
-                    continue;
-                }
+    /* основной цикл: блокируемся на pipe событий */
+    for (;;) {
+        unsigned short code;
+        ssize_t r = read(evt_pipe[0], &code, sizeof(code));
+        if (r < 0) {
+            if (errno == EINTR) continue;
+            die("read(evt_pipe)");
+        }
+        if (r == 0) continue;
 
-                if (n == 0) {
-                    /* клиент закрылся */
-                    close(i);
-                    clients[i] = 0;
-                    break;
-                }
-
-                /* n < 0 */
-                if (errno == EINTR) continue;
-                if (errno == EAGAIN || errno == EWOULDBLOCK) break;
-
-                /* прочая ошибка — закрываем */
-                close(i);
-                clients[i] = 0;
-                break;
-            }
+        if (code == EVT_ACCEPT) {
+            accept_all_pending();
+        } else {
+            handle_aio_slot((int)code);
         }
     }
-
-    return 0;
 }
