@@ -1,120 +1,172 @@
+#define _POSIX_C_SOURCE 200809L
 #include <stdio.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <stdlib.h>
+#include <string.h>
 
-int main()
+#define BUFFER_SIZE 1024
+
+void print_help(const char *prog) {
+    printf("This program reads up to 1024 bytes of a text file and allows you to view any line by its number.\n\n");
+    printf("Usage:\n");
+    printf("  %s <filename>\n", prog);
+    printf("  %s --help\n", prog);
+    printf("  %s -h\n", prog);
+}
+
+int main(int argc, char *argv[])
 {
-    int file_descriptor = open("input.txt", O_RDONLY);
-    if (file_descriptor == -1) {
-        perror("Failed to open file");
-        return 1;
+    if (argc == 2 && (strcmp(argv[1], "--help") == 0 || strcmp(argv[1], "-h") == 0)) 
+    {
+        print_help(argv[0]);
+        return EXIT_SUCCESS;
     }
 
-    char buffer[1024];
-    int bytes_read = read(file_descriptor, buffer, sizeof(buffer));
-    if (bytes_read == -1) {
-        perror("Failed to read file");
-        close(file_descriptor);
-        return 1;
+
+    if (argc != 2) {
+        fprintf(stderr, "Error: Expected exactly 1 argument.\n");
+        fprintf(stderr, "Usage: %s <filename>\n", argv[0]);
+        exit(EXIT_FAILURE);
     }
+
+
+    int fd = open(argv[1], O_RDONLY);
+    if (fd == -1) {
+        fprintf(stderr, "Error: Failed to open file '%s'.\n", argv[1]);
+        exit(EXIT_FAILURE);
+    }
+
+
+    char buffer[BUFFER_SIZE];
+    ssize_t bytes_read = read(fd, buffer, sizeof(buffer));
+
+    if (bytes_read < 0) {
+        fprintf(stderr, "Error: Failed to read from file.\n");
+        close(fd);
+        exit(EXIT_FAILURE);
+    }
+
+    if (bytes_read == 0) {
+        printf("File is empty.\n");
+        close(fd);
+        return EXIT_SUCCESS;
+    }
+
 
     int line_count = 0;
-    int i;  // Объявление переменной вне цикла
-    for (i = 0; i < bytes_read; i++) {
-        if (buffer[i] == '\n') {
+    for (ssize_t i = 0; i < bytes_read; i++) {
+        if (buffer[i] == '\n')
             line_count++;
-        }
     }
-
-    if (bytes_read > 0 && buffer[bytes_read-1] != '\n') {
+    if (buffer[bytes_read - 1] != '\n')
         line_count++;
-    }
 
-    if (line_count == 0) {
-        printf("File is empty\n");
-        close(file_descriptor);
-        return 0;
-    }
 
     int *line_positions = malloc((line_count + 1) * sizeof(int));
-    if (line_positions == NULL) {
-        perror("Memory allocation failed");
-        close(file_descriptor);
-        return 1;
+    if (!line_positions) {
+        fprintf(stderr, "Error: Memory allocation failed.\n");
+        close(fd);
+        exit(EXIT_FAILURE);
     }
-    
-    line_positions[0] = 0;
-    int index = 1;
 
-    for (i = 0; i < bytes_read; i++)  // Используем уже объявленную i
-    {
-        if (buffer[i] == '\n') 
-        {
-            line_positions[index] = i + 1;
-            index++;
+    line_positions[0] = 0;
+    int idx = 1;
+
+    for (ssize_t i = 0; i < bytes_read; i++) {
+        if (buffer[i] == '\n') {
+            line_positions[idx++] = i + 1;
         }
     }
 
     line_positions[line_count] = bytes_read;
 
     printf("== Line number to position mapping ==\n");
-    int j;  // Объявление переменной вне цикла
-    for (j = 0; j < line_count; j++)
-    {
-        lseek(file_descriptor, line_positions[j], SEEK_SET);
+    for (int i = 0; i < line_count; i++) {
 
-        int line_length = line_positions[j+1] - line_positions[j];
-        char *line_content = malloc(line_length + 1);
-        if (line_content) {
-            read(file_descriptor, line_content, line_length);
-            line_content[line_length] = '\0';
-            free(line_content);
+        off_t seek_res = lseek(fd, line_positions[i], SEEK_SET);
+        if (seek_res == (off_t)-1) {
+            fprintf(stderr, "Error: lseek failed.\n");
+            free(line_positions);
+            close(fd);
+            exit(EXIT_FAILURE);
         }
 
-        printf("%d\t%d\t%d\n", j+1, line_positions[j], line_length);
+        int line_length = line_positions[i + 1] - line_positions[i];
+        char *line_buf = malloc(line_length + 1);
+        if (!line_buf) {
+            fprintf(stderr, "Error: Memory allocation failed.\n");
+            free(line_positions);
+            close(fd);
+            exit(EXIT_FAILURE);
+        }
+
+        ssize_t r = read(fd, line_buf, line_length);
+        if (r != line_length) {
+            fprintf(stderr, "Error: Failed to read full line.\n");
+            free(line_buf);
+            free(line_positions);
+            close(fd);
+            exit(EXIT_FAILURE);
+        }
+
+        line_buf[line_length] = '\0';
+
+        free(line_buf);
+
+        printf("%d\t%d\t%d\n", i + 1, line_positions[i], line_length);
     }
 
-    while(1)
-    {
-        printf("Enter line number (1-%d, 0 to exit): ", line_count);
-        int line_number;
-        int scan_result = scanf("%d", &line_number);
 
-        if (scan_result != 1) {
-            printf("Error: Invalid input\n");
+    while (1) {
+        printf("Enter line number (1-%d, 0 to exit): ", line_count);
+
+        int line_number;
+        int res = scanf("%d", &line_number);
+
+        if (res != 1) {
+            fprintf(stderr, "Error: Invalid input.\n");
             int c;
             while ((c = getchar()) != '\n' && c != EOF);
             continue;
         }
 
-        if (line_number == 0) { 
-            break; 
-        } 
-        else if (line_number > line_count || line_number < 1)
-        {
-            printf("Invalid line number\n");
+        if (line_number == 0)
+            break;
+
+        if (line_number < 1 || line_number > line_count) {
+            printf("Invalid line number.\n");
             continue;
         }
 
-        lseek(file_descriptor, line_positions[line_number-1], SEEK_SET);
+        int start = line_positions[line_number - 1];
+        int length = line_positions[line_number] - start;
 
-        int line_length = line_positions[line_number] - line_positions[line_number-1];
-        char *line_content = malloc(line_length + 1);
-        if (line_content == NULL) {
-            perror("Memory allocation failed");
+        if (lseek(fd, start, SEEK_SET) == (off_t)-1) {
+            fprintf(stderr, "Error: lseek failed.\n");
             continue;
         }
-        
-        read(file_descriptor, line_content, line_length);
-        line_content[line_length] = '\0';
-        
-        printf("Line %d: %s", line_number, line_content);
-        free(line_content);
+
+        char *buf = malloc(length + 1);
+        if (!buf) {
+            fprintf(stderr, "Error: Memory allocation failed.\n");
+            continue;
+        }
+
+        ssize_t r = read(fd, buf, length);
+        if (r != length) {
+            fprintf(stderr, "Error: Failed to read line.\n");
+            free(buf);
+            continue;
+        }
+
+        buf[length] = '\0';
+        printf("Line %d: %s", line_number, buf);
+        free(buf);
     }
 
     free(line_positions);
-    close(file_descriptor);
+    close(fd);
 
-    return 0;
+    return EXIT_SUCCESS;
 }
