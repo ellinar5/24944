@@ -1,0 +1,5 @@
+all:
+	gcc -std=c99 16 task.c -o answer
+
+clean:
+	rm -f answer
