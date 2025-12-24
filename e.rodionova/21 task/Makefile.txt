@@ -1,0 +1,2 @@
+all:
+    gcc -std=c99 21 task.c -o tst5 
